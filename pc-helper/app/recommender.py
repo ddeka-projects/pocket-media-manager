@@ -4,17 +4,78 @@ import json
 import os
 import random
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 
-UNSEEN_BONUS = 8.0
-LIKE_BONUS = 1.25
-PENDING_BONUS = 0.35
-DISLIKE_PENALTY = 1.75
-MIN_WEIGHT_FLOOR = 0.12
-RECENCY_TIE_BREAKER_MIN_MULTIPLIER = 0.9
+@dataclass(frozen=True)
+class RecommendationProfile:
+    """Tuning constants for a recommendation mood."""
+
+    name: str
+    label: str
+    unseen_bonus: float
+    like_bonus: float
+    pending_bonus: float
+    dislike_penalty: float
+    min_weight_floor: float
+    recency_tie_breaker_min_multiplier: float
+    play_count_bonus: float = 0.0
+    pending_priority_bonus: float = 0.0
+
+
+BALANCED = RecommendationProfile(
+    name="balanced",
+    label="\u2696\ufe0f Balanced",
+    unseen_bonus=2.5,
+    like_bonus=1.25,
+    pending_bonus=0.35,
+    dislike_penalty=1.75,
+    min_weight_floor=0.12,
+    recency_tie_breaker_min_multiplier=0.9,
+)
+
+SURPRISE = RecommendationProfile(
+    name="surprise",
+    label="\U0001f3b2 Surprise Me",
+    unseen_bonus=12.0,
+    like_bonus=0.6,
+    pending_bonus=0.2,
+    dislike_penalty=1.75,
+    min_weight_floor=0.12,
+    recency_tie_breaker_min_multiplier=0.75,
+)
+
+COMFORT = RecommendationProfile(
+    name="comfort",
+    label="\U0001f6cb\ufe0f Comfort Zone",
+    unseen_bonus=0.0,
+    like_bonus=2.5,
+    pending_bonus=0.15,
+    dislike_penalty=2.5,
+    min_weight_floor=0.12,
+    recency_tie_breaker_min_multiplier=0.9,
+    play_count_bonus=0.3,
+)
+
+PENDING_REVIEW = RecommendationProfile(
+    name="pending",
+    label="\u23f3 Pending Review",
+    unseen_bonus=0.0,
+    like_bonus=0.5,
+    pending_bonus=0.35,
+    dislike_penalty=1.0,
+    min_weight_floor=0.12,
+    recency_tie_breaker_min_multiplier=0.9,
+    pending_priority_bonus=10.0,
+)
+
+PROFILES: dict[str, RecommendationProfile] = {
+    p.name: p for p in (BALANCED, SURPRISE, COMFORT, PENDING_REVIEW)
+}
+DEFAULT_PROFILE = BALANCED
 
 DEFAULT_META = {
     "likes": 0,
@@ -168,7 +229,10 @@ def date_added_sort_value(file_path: Path) -> datetime:
         return datetime.max
 
 
-def compute_weight(meta: dict[str, Any]) -> float:
+def compute_weight(
+    meta: dict[str, Any],
+    profile: RecommendationProfile = DEFAULT_PROFILE,
+) -> float:
     likes = meta.get("likes", 0)
     dislikes = meta.get("dislikes", 0)
     pending = meta.get("pending", 0)
@@ -176,37 +240,31 @@ def compute_weight(meta: dict[str, Any]) -> float:
 
     weight = 1.0
     if play_count == 0:
-        weight += UNSEEN_BONUS
+        weight += profile.unseen_bonus
+    else:
+        weight += profile.play_count_bonus * play_count
 
-    preference = 1.0 + (LIKE_BONUS * likes) + (PENDING_BONUS * pending) - (DISLIKE_PENALTY * dislikes)
-    preference = max(preference, MIN_WEIGHT_FLOOR)
+    preference = (
+        1.0
+        + (profile.like_bonus * likes)
+        + (profile.pending_bonus * pending)
+        - (profile.dislike_penalty * dislikes)
+    )
+
+    if pending > 0:
+        preference += profile.pending_priority_bonus
+
+    preference = max(preference, profile.min_weight_floor)
 
     weight *= preference
-    return max(weight, MIN_WEIGHT_FLOOR)
-
-
-def score_media_files(files: list[Path], prefs: dict[str, Any]) -> list[tuple[Path, float]]:
-    scored = []
-    for file_path in files:
-        meta = prefs["files"].get(str(file_path), {})
-        score = compute_weight(meta)
-        last_played = meta.get("last_played")
-        if last_played:
-            tie_bucket = 1
-            tie_value = last_played_sort_value(meta)
-        else:
-            tie_bucket = 0
-            tie_value = date_added_sort_value(file_path)
-        scored.append((file_path, score, tie_bucket, tie_value))
-
-    scored.sort(key=lambda item: (-item[1], item[2], item[3], str(item[0]).lower()))
-    return [(file_path, score) for file_path, score, _tie_bucket, _tie_value in scored]
+    return max(weight, profile.min_weight_floor)
 
 
 def apply_recency_tie_breakers(
     files: list[Path],
     prefs: dict[str, Any],
     weights: list[float],
+    profile: RecommendationProfile = DEFAULT_PROFILE,
 ) -> list[float]:
     groups: dict[float, list[int]] = {}
     for index, weight in enumerate(weights):
@@ -233,21 +291,30 @@ def apply_recency_tie_breakers(
         for index in indices:
             meta = prefs["files"].get(str(files[index]), {})
             rank = recency_rank[last_played_sort_value(meta)]
-            multiplier = 1.0 - ((1.0 - RECENCY_TIE_BREAKER_MIN_MULTIPLIER) * (rank / max_rank))
-            adjusted[index] = max(weights[index] * multiplier, MIN_WEIGHT_FLOOR)
+            multiplier = 1.0 - (
+                (1.0 - profile.recency_tie_breaker_min_multiplier)
+                * (rank / max_rank)
+            )
+            adjusted[index] = max(
+                weights[index] * multiplier, profile.min_weight_floor
+            )
 
     return adjusted
 
 
-def pick_weighted(files: list[Path], prefs: dict[str, Any]) -> Path:
+def pick_weighted(
+    files: list[Path],
+    prefs: dict[str, Any],
+    profile: RecommendationProfile = DEFAULT_PROFILE,
+) -> Path:
     if not files:
         raise ValueError("No media files available")
 
     weights = []
     for file_path in files:
         meta = prefs["files"].get(str(file_path), {})
-        weights.append(compute_weight(meta))
-    adjusted_weights = apply_recency_tie_breakers(files, prefs, weights)
+        weights.append(compute_weight(meta, profile))
+    adjusted_weights = apply_recency_tie_breakers(files, prefs, weights, profile)
     return random.choices(files, weights=adjusted_weights, k=1)[0]
 
 

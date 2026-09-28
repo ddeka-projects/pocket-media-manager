@@ -87,24 +87,24 @@ For this personal app, validation is intentionally ad-hoc: run the helper and
 try the workflow from your phone instead of maintaining an automated test
 suite.
 
-Choose **VLC (Phone)** or **mpv (PC)** from the toggle on the home page, then
-tap `Recommend` to open the chosen player. Use `Recommend with Selections`
-when you want to choose one or more top-level folders under the configured media
-root for a single recommendation. Use `Stream` when you want to browse the
-configured `STREAM_FOLDER` under the media root and play files directly without
+Choose **VLC (Phone)** or **mpv (PC)** from the player toggle on the home page.
+Below it, choose a recommendation profile: **Balanced** (default), **Surprise
+Me**, **Comfort Zone**, or **Pending Review**. Then tap `Recommend` to open the
+chosen player. Use `Recommend with Selections` when you want to choose one or
+more top-level folders under the configured media root for a single
+recommendation. Use `Stream` when you want to browse the configured
+`STREAM_FOLDER` under the media root and play files directly without
 recommendation scoring or feedback. Use `Explore` when you want to browse
-folders and pick a supported media file directly. Use `Scoreboard` when you
-want a read-only ranking of recommend-able files by their current numerical
-score. Use `Clean Up` to remove selected orphan preference records for media
-files that no longer exist under the media root. The selection page shows the
-media root at the top. When you switch back to the browser after a selected
-recommendation, feedback returns you to the selection page with the same
-eligible folders checked. Use `Cancel` on that page to clear the selection and
-return home. After choosing a file through `Explore`, submitting feedback
-returns you to the Explore folder that contained the file. Use `Something Else`
-when the file needs Remake, Fix, Trim, or Hold handling without changing its
-like/dislike/pending score. Files with unresolved Something Else feedback are
-hidden from recommendations, Explore, and Scoreboard until they are cleared
-through `Address Other Feedback`.
+folders and pick a supported media file directly. Use `Clean Up` to remove
+selected orphan preference records for media files that no longer exist under
+the media root. The selection page shows the media root at the top. When you
+switch back to the browser after a selected recommendation, feedback returns
+you to the selection page with the same eligible folders checked. Use `Cancel`
+on that page to clear the selection and return home. After choosing a file
+through `Explore`, submitting feedback returns you to the Explore folder that
+contained the file. Use `Something Else` when the file needs Remake, Fix, Trim,
+or Hold handling without changing its like/dislike/pending score. Files with
+unresolved Something Else feedback are hidden from recommendations and Explore
+until they are cleared through `Address Other Feedback`.
 
 See `pc-helper/README.md` for the full setup and phone workflow.

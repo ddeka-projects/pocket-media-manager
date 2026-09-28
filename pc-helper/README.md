@@ -64,7 +64,7 @@ does not inherit your user PATH.
 `STREAM_FOLDER` names a direct-play folder inside `MEDIA_ROOT`. With the
 default value, the folder is `MEDIA_ROOT\_stream`. Files in this folder are for
 Stream mode only: they are playable from the `Stream` button but are excluded
-from recommendations, Explore, Scoreboard, and `_mpv_prefs.json` updates.
+from recommendations, Explore, and `_mpv_prefs.json` updates.
 
 The helper stores recommendation preferences in `MEDIA_ROOT\_mpv_prefs.json`.
 If that file does not exist, it is created the first time preferences are saved.
@@ -171,9 +171,11 @@ The main phone workflow is the helper home page:
 http://<PC_LAN_IP>:8787/
 ```
 
-Choose **VLC (Phone)** or **mpv (PC)** from the toggle at the top of the home
-page, then tap `Recommend`. The helper selects a video, records the play, opens
-the chosen player, and leaves the browser on a feedback page.
+Choose **VLC (Phone)** or **mpv (PC)** from the player toggle at the top of
+the home page. Below it, choose a recommendation profile: **Balanced**
+(default), **Surprise Me**, **Comfort Zone**, or **Pending Review**. Then
+tap `Recommend`. The helper selects a video using the chosen profile, records
+the play, opens the chosen player, and leaves the browser on a feedback page.
 
 Tap `Stream` when you want to browse `MEDIA_ROOT\STREAM_FOLDER` directly
 without entering the recommendation and feedback cycle. Stream looks like
@@ -194,11 +196,6 @@ unresolved Something Else feedback are hidden from Explore, and the configured
 Stream folder is hidden because it has its own direct-play workflow. After you
 submit feedback for an explored file, the browser returns to the same Explore
 folder that contained that file so you can continue browsing from there.
-
-Tap `Scoreboard` to see a read-only ranking of recommend-able media files by
-their current numerical recommendation score. It shows only the media filename
-and score, excludes files with unresolved Something Else feedback, and keeps a
-sticky `Back` button at the top while you scroll.
 
 Tap `Clean Up` when you want to remove orphan records from
 `MEDIA_ROOT\_mpv_prefs.json`. The page lists preference records whose saved
@@ -272,17 +269,27 @@ shows the top-level folder as a tag and the media filename, such as
 entries from `other_feedback.jsonl`. Cancel returns home without changing the
 file. Once an entry is removed here, that file becomes eligible again.
 
-Recommendation is weighted random rather than a strict queue. Never-played
-files receive the strongest boost so new discovery is prioritized. Likes raise
-future weight, Pending gives a smaller positive nudge, and Dislikes strongly
-lower weight. These weights stay in place until you change the preference data
-or reset preferences; there is no fixed "played in the last 7 days" cooldown.
-When otherwise equal-weight files are in the same recommendation pool,
-`last_played` is used only as a tie-breaker so less recently played files are a
-little more likely than recently played ones. The Scoreboard uses the same
-numerical score for ranking. Ties are ordered from less recently played to more
-recently played; never-played ties are ordered from older date-added to newer
-date-added.
+Recommendation is weighted random rather than a strict queue. The home page
+offers four recommendation profiles that control how weights are calculated:
+
+- **Balanced** — A genuinely even-handed default. Unseen files get a moderate
+  boost, liked files compete on roughly equal footing, and dislikes carry a
+  meaningful penalty.
+- **Surprise Me** — Maximize discovery. Never-played files receive a large
+  boost, like bonuses are dampened, and the recency tie-breaker is stronger so
+  recently-played files are pushed further down.
+- **Comfort Zone** — Stick to favorites. No unseen bonus, amplified like bonus,
+  stronger dislike penalty, and play count itself becomes a positive signal (more
+  plays = higher weight).
+- **Pending Review** — Clear the backlog. Files with pending feedback get a
+  massive boost, everything else is deprioritized. Use this when you want to
+  revisit items you flagged as "come back later."
+
+These weights stay in place until you change the preference data or reset
+preferences; there is no fixed "played in the last 7 days" cooldown. When
+otherwise equal-weight files are in the same recommendation pool, `last_played`
+is used only as a tie-breaker so less recently played files are a little more
+likely than recently played ones.
 
 The home page also has `Reset Preferences`. It opens a confirmation page before
 clearing `MEDIA_ROOT\_mpv_prefs.json` back to an empty preference database.
@@ -303,11 +310,14 @@ http://<PC_LAN_IP>:8787/next
 2. Get `player_url` from the JSON response (VLC) or check `launched` (mpv).
 3. Open the URL (VLC) or confirm mpv launched (mpv).
 
-Pass `?player=vlc` (default) or `?player=mpv` to choose the player:
+Pass `?player=vlc` (default) or `?player=mpv` to choose the player. Pass
+`?profile=balanced` (default), `?profile=surprise`, `?profile=comfort`, or
+`?profile=pending` to choose the recommendation profile:
 
 ```text
 http://<PC_LAN_IP>:8787/next?player=vlc
 http://<PC_LAN_IP>:8787/next?player=mpv
+http://<PC_LAN_IP>:8787/next?player=vlc&profile=surprise
 ```
 
 Create feedback shortcuts:
@@ -333,8 +343,9 @@ which item was last recommended.
 - `GET /`
   Returns the minimal browser control page.
 - `POST /recommend`
-  Browser action that selects a recommendation, opens the chosen player (VLC
-  deep link or mpv subprocess), and shows feedback buttons.
+  Browser action that selects a recommendation using the active profile, opens
+  the chosen player (VLC deep link or mpv subprocess), and shows feedback
+  buttons. Accepts `player` and `profile` form fields.
 - `GET /explore`
   Shows a manual browser rooted at `MEDIA_ROOT`.
 - `GET /explore?path=...`
@@ -349,8 +360,6 @@ which item was last recommended.
 - `POST /stream/play`
   Creates a temporary playback token for a selected Stream file and opens the
   chosen player without recording recommendation metadata or showing feedback.
-- `GET /scoreboard`
-  Shows recommend-able media files ranked by current numerical score.
 - `GET /cleanup`
   Shows orphan records from `_mpv_prefs.json` whose paths are no longer present
   under `MEDIA_ROOT`.
@@ -359,8 +368,9 @@ which item was last recommended.
   home page. Existing media records are kept.
 - `GET /next`
   Picks and records a recommendation, then returns `stream_url`, `player`,
-  `player_url` (VLC) or `launched` (mpv), and feedback URLs. Accepts an
-  optional `player` query param (`vlc` or `mpv`, default `vlc`).
+  `player_url` (VLC) or `launched` (mpv), and feedback URLs. Accepts optional
+  `player` (`vlc` or `mpv`, default `vlc`) and `profile` (`balanced`,
+  `surprise`, `comfort`, or `pending`, default `balanced`) query params.
 - `GET /stream/{token}`
   Streams a token-mapped file. The helper keeps the latest 30 playback tokens
   in memory; older links naturally expire and return 404, the same as unknown
@@ -426,8 +436,8 @@ the old file, so a failed write should leave the previous complete JSON file in
 place.
 
 Files under `MEDIA_ROOT\STREAM_FOLDER` are intentionally outside the preference
-system. They are not scanned for recommendations, not shown in Explore or
-Scoreboard, and not added to `_mpv_prefs.json` when played from Stream.
+system. They are not scanned for recommendations, not shown in Explore, and
+not added to `_mpv_prefs.json` when played from Stream.
 
 When media files are deleted or moved, their old preference records can remain
 in `_mpv_prefs.json`. `Clean Up` lists those orphan records and removes only
@@ -461,5 +471,5 @@ This personal helper no longer carries an automated test suite. For changes,
 run the development server and try the affected workflow from your phone or
 from the local browser. The key manual checks are that the home page opens,
 recommendations launch the chosen player, feedback returns to the expected
-page, and maintenance screens such as Scoreboard, Address Other Feedback, and
-Clean Up show the expected data.
+page, and maintenance screens such as Address Other Feedback and Clean Up show
+the expected data.

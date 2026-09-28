@@ -126,34 +126,6 @@ def _page(title: str, body: str) -> HTMLResponse:
     .file-name {{
       color: #181818;
     }}
-    .score-list {{
-      display: grid;
-      gap: .45rem;
-    }}
-    .score-row {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: center;
-      gap: .75rem;
-      border-bottom: 1px solid #d8d8d2;
-      padding: .6rem 0;
-    }}
-    .score-name {{
-      min-width: 0;
-      color: #181818;
-      line-height: 1.3;
-      overflow-wrap: anywhere;
-    }}
-    .score-value {{
-      border: 1px solid #bcbcb5;
-      border-radius: 999px;
-      padding: .15rem .5rem;
-      background: white;
-      color: #181818;
-      font-variant-numeric: tabular-nums;
-      font-weight: 650;
-      white-space: nowrap;
-    }}
     button, a.button {{
       width: 100%;
       box-sizing: border-box;
@@ -169,12 +141,13 @@ def _page(title: str, body: str) -> HTMLResponse:
     }}
     button.secondary, a.secondary {{ background: white; color: #181818; }}
     button.danger {{ border-color: #9d2020; background: #9d2020; }}
-    .player-toggle {{
+    .player-toggle, .profile-toggle {{
       display: flex;
       gap: .5rem;
       justify-content: center;
+      flex-wrap: wrap;
     }}
-    .player-toggle button {{
+    .player-toggle button, .profile-toggle button {{
       width: auto;
       padding: .5rem 1.2rem;
       border-radius: 999px;
@@ -183,7 +156,7 @@ def _page(title: str, body: str) -> HTMLResponse:
       background: white;
       color: #181818;
     }}
-    .player-toggle button.active {{
+    .player-toggle button.active, .profile-toggle button.active {{
       border-color: #181818;
       background: #181818;
       color: white;
@@ -277,6 +250,13 @@ def _home_page(settings: Settings) -> HTMLResponse:
     if feedback_page is not None:
         return feedback_page
 
+    profile_buttons = " ".join(
+        '<button type="button"'
+        + (' class="active"' if p.name == "balanced" else "")
+        + f' data-profile="{p.name}">{p.label}</button>'
+        for p in recommender.PROFILES.values()
+    )
+
     return _page(
         "Pocket Media Manager",
         f"""<h1>Pocket Media Manager</h1>
@@ -284,13 +264,18 @@ def _home_page(settings: Settings) -> HTMLResponse:
   <button type="button" class="active" data-player="vlc">VLC (Phone)</button>
   <button type="button" data-player="mpv">mpv (PC)</button>
 </div>
+<div class="profile-toggle">
+  {profile_buttons}
+</div>
 <div class="stack">
   <form method="post" action="/recommend">
     <input type="hidden" name="player" value="vlc">
+    <input type="hidden" name="profile" value="balanced">
     <button type="submit">Recommend</button>
   </form>
   <form method="get" action="/select">
     <input type="hidden" name="player" value="vlc">
+    <input type="hidden" name="profile" value="balanced">
     <button class="secondary" type="submit">Recommend with Selections</button>
   </form>
   <form method="get" action="/stream">
@@ -300,9 +285,6 @@ def _home_page(settings: Settings) -> HTMLResponse:
   <form method="get" action="/explore">
     <input type="hidden" name="player" value="vlc">
     <button class="secondary" type="submit">Explore</button>
-  </form>
-  <form method="get" action="/scoreboard">
-    <button class="secondary" type="submit">Scoreboard</button>
   </form>
   <form method="get" action="/feedback/addressed">
     <button class="secondary" type="submit">Address Other Feedback</button>
@@ -326,40 +308,18 @@ def _home_page(settings: Settings) -> HTMLResponse:
       }});
     }});
   }});
+  document.querySelectorAll("[data-profile]").forEach(function (btn) {{
+    btn.addEventListener("click", function () {{
+      document.querySelectorAll("[data-profile]").forEach(function (b) {{
+        b.classList.remove("active");
+      }});
+      btn.classList.add("active");
+      document.querySelectorAll('input[name="profile"]').forEach(function (input) {{
+        input.value = btn.dataset.profile;
+      }});
+    }});
+  }});
 </script>""",
-    )
-
-
-def _scoreboard_page(settings: Settings) -> HTMLResponse:
-    feedback_page = _current_feedback_page()
-    if feedback_page is not None:
-        return feedback_page
-
-    files = _find_recommendable_media_files(settings, settings.media_root)
-    if not files:
-        rows = "<p>No recommend-able media files were found.</p>"
-    else:
-        with PREFS_LOCK:
-            prefs = _load_current_prefs(settings)
-            recommender.ensure_entries(prefs, files)
-            ranked_files = recommender.score_media_files(files, prefs)
-            recommender.save_prefs(prefs, settings.prefs_file)
-        rows = "\n".join(
-            f"""<div class="score-row">
-  <span class="score-name">{escape(file_path.name)}</span>
-  <span class="score-value">{score:.2f}</span>
-</div>"""
-            for file_path, score in ranked_files
-        )
-        rows = f'<div class="score-list">{rows}</div>'
-
-    return _page(
-        "Scoreboard",
-        f"""<h1>Scoreboard</h1>
-<div class="toolbar single">
-  <a class="button secondary" href="/">Back</a>
-</div>
-{rows}""",
     )
 
 
@@ -562,6 +522,10 @@ def _other_feedback_page(file_name: str) -> HTMLResponse:
     )
 
 
+def _active_profile() -> recommender.RecommendationProfile:
+    return recommender.PROFILES.get(state.get_active_profile(), recommender.DEFAULT_PROFILE)
+
+
 def _select_from_files(
     settings: Settings,
     files: list[Path],
@@ -573,10 +537,11 @@ def _select_from_files(
             detail="No supported media files found",
         )
 
+    profile = _active_profile()
     with PREFS_LOCK:
         prefs = _load_current_prefs(settings)
         recommender.ensure_entries(prefs, files)
-        selected = recommender.pick_weighted(files, prefs)
+        selected = recommender.pick_weighted(files, prefs, profile)
         recommender.record_play(prefs, selected)
         recommender.save_prefs(prefs, settings.prefs_file)
 
@@ -1083,11 +1048,6 @@ def home() -> HTMLResponse:
     return _home_page(_settings())
 
 
-@app.get("/scoreboard", response_class=HTMLResponse)
-def scoreboard() -> HTMLResponse:
-    return _scoreboard_page(_settings())
-
-
 @app.get("/stream", response_class=HTMLResponse)
 def stream_browse(path: str | None = None, player: str | None = None) -> HTMLResponse:
     if player is not None:
@@ -1139,8 +1099,9 @@ def save_feedback_addressed(line_numbers: list[int] = Form(default=[])) -> Redir
 
 
 @app.post("/recommend", response_class=HTMLResponse)
-def recommend_from_browser(player: str = Form("vlc")) -> HTMLResponse:
+def recommend_from_browser(player: str = Form("vlc"), profile: str = Form("balanced")) -> HTMLResponse:
     state.set_active_player(player)
+    state.set_active_profile(profile)
     settings = _settings()
     selected = _select_next(settings)
     return _feedback_page_for_selection(settings, selected)
@@ -1161,9 +1122,11 @@ def play_explored_file(path: str = Form(...)) -> HTMLResponse:
 
 
 @app.get("/select", response_class=HTMLResponse)
-def select_folders(player: str | None = None) -> HTMLResponse:
+def select_folders(player: str | None = None, profile: str | None = None) -> HTMLResponse:
     if player is not None:
         state.set_active_player(player)
+    if profile is not None:
+        state.set_active_profile(profile)
     return _selection_page(_settings())
 
 
@@ -1208,8 +1171,9 @@ def recommend_from_selected_folders(folders: list[str] = Form(default=[])) -> HT
 
 
 @app.get("/next")
-def next_video(player: str = "vlc") -> dict[str, Any]:
+def next_video(player: str = "vlc", profile: str = "balanced") -> dict[str, Any]:
     state.set_active_player(player)
+    state.set_active_profile(profile)
     settings = _settings()
     selected = _select_next(settings)
     active = state.get_active_player()

@@ -15,6 +15,7 @@ SELECTED_FOLDER_NAMES: list[str] = []
 FEEDBACK_RETURN_PATH = "/"
 SUPPORTED_PLAYERS = {"vlc", "mpv"}
 ACTIVE_PLAYER = "vlc"
+ACTIVE_PROFILE = "balanced"
 
 
 def set_last_recommended(file_path: Path) -> None:
@@ -91,6 +92,16 @@ def set_active_player(player: str) -> None:
 
 def get_active_player() -> str:
     return ACTIVE_PLAYER
+
+
+def set_active_profile(profile: str) -> None:
+    global ACTIVE_PROFILE
+    from .recommender import PROFILES
+    ACTIVE_PROFILE = profile if profile in PROFILES else "balanced"
+
+
+def get_active_profile() -> str:
+    return ACTIVE_PROFILE
 
 
 def clear_state() -> None:
