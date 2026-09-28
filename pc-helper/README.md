@@ -84,9 +84,9 @@ Look for the IPv4 address on the active Wi-Fi or Ethernet adapter.
 
 ## Everyday Windows Startup
 
-For normal phone use, run the helper as a Windows scheduled task instead of
-keeping a development terminal open. This starts the server when Windows boots,
-before you sign in, and keeps it available while the PC is awake.
+For normal use, run the helper as a Windows scheduled task instead of keeping a
+development terminal open. This starts the server when you sign in and keeps it
+available while the PC is awake.
 
 From an elevated PowerShell in `pc-helper`:
 
@@ -95,9 +95,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1
 ```
 
 The task runs `scripts\run-server.ps1`, which starts Uvicorn without
-development reload mode. The scheduled task runs as Windows `SYSTEM`, so it does
-not depend on your account being signed in. It reads `SERVER_HOST` and
-`SERVER_PORT` from `.env`, defaulting to:
+development reload mode. The scheduled task runs under your user account with
+an interactive logon, so programs launched by the helper (such as mpv) appear
+on your desktop. It reads `SERVER_HOST` and `SERVER_PORT` from `.env`,
+defaulting to:
 
 ```text
 http://0.0.0.0:8787

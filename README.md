@@ -42,9 +42,8 @@ PowerShell opened in `pc-helper`:
 powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1
 ```
 
-After that, the helper starts automatically when Windows starts, before you sign
-in. It runs without development reload mode, which is better for leaving it
-available to your phone while the PC is awake.
+After that, the helper starts automatically when you sign in. It runs under your
+user account so programs it launches (such as mpv) appear on your desktop.
 
 When you edit `pc-helper\.env`, restart the scheduled task from an elevated
 PowerShell so the running helper loads the new settings:
