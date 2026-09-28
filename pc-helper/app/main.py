@@ -1089,8 +1089,9 @@ def scoreboard() -> HTMLResponse:
 
 
 @app.get("/stream", response_class=HTMLResponse)
-def stream_browse(path: str | None = None, player: str = "vlc") -> HTMLResponse:
-    state.set_active_player(player)
+def stream_browse(path: str | None = None, player: str | None = None) -> HTMLResponse:
+    if player is not None:
+        state.set_active_player(player)
     return _stream_page(_settings(), path)
 
 
@@ -1146,8 +1147,9 @@ def recommend_from_browser(player: str = Form("vlc")) -> HTMLResponse:
 
 
 @app.get("/explore", response_class=HTMLResponse)
-def explore(path: str | None = None, player: str = "vlc") -> HTMLResponse:
-    state.set_active_player(player)
+def explore(path: str | None = None, player: str | None = None) -> HTMLResponse:
+    if player is not None:
+        state.set_active_player(player)
     return _explore_page(_settings(), path)
 
 
@@ -1159,8 +1161,9 @@ def play_explored_file(path: str = Form(...)) -> HTMLResponse:
 
 
 @app.get("/select", response_class=HTMLResponse)
-def select_folders(player: str = "vlc") -> HTMLResponse:
-    state.set_active_player(player)
+def select_folders(player: str | None = None) -> HTMLResponse:
+    if player is not None:
+        state.set_active_player(player)
     return _selection_page(_settings())
 
 
