@@ -57,12 +57,14 @@ class Settings:
     server_port: int
     public_base_url: str
     stream_folder: str
+    mpv_path: str
 
 
 def get_settings() -> Settings:
     _load_dotenv()
     server_port = int(os.getenv("SERVER_PORT", "8787"))
     public_base_url = os.getenv("PUBLIC_BASE_URL", f"http://127.0.0.1:{server_port}").rstrip("/")
+    mpv_path = os.getenv("MPV_PATH", "mpv").strip()
     media_root = _path_from_env("MEDIA_ROOT", DEFAULT_MEDIA_ROOT)
     return Settings(
         media_root=media_root,
@@ -72,4 +74,5 @@ def get_settings() -> Settings:
         server_port=server_port,
         public_base_url=public_base_url,
         stream_folder=_stream_folder_from_env(),
+        mpv_path=mpv_path or "mpv",
     )

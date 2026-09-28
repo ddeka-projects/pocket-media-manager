@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 from html import escape
 import json
+import logging
 import subprocess
 from threading import RLock
 from urllib.parse import urlencode
@@ -16,6 +17,7 @@ from . import recommender
 from . import state
 
 
+logger = logging.getLogger("pocket_media_manager")
 app = FastAPI(title="Pocket Media Recommender Helper", version="0.1.0")
 OTHER_FEEDBACK_FILE_NAME = "other_feedback.jsonl"
 APP_ICON_PATH = Path(__file__).resolve().parents[1] / "pocket-manager-icon.png"
@@ -203,7 +205,21 @@ def build_vlc_url(stream_url: str) -> str:
 
 
 def _launch_mpv(file_path: Path) -> None:
-    subprocess.Popen(["mpv", str(file_path)])
+    mpv = _settings().mpv_path
+    try:
+        subprocess.Popen([mpv, str(file_path)])
+    except FileNotFoundError:
+        logger.error("mpv not found at '%s'. Set MPV_PATH in .env to the full path.", mpv)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"mpv not found at '{mpv}'. Set MPV_PATH in .env to the full path to mpv.",
+        )
+    except OSError as exc:
+        logger.error("Failed to launch mpv at '%s': %s", mpv, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to launch mpv: {exc}",
+        )
 
 
 def _is_under(path: Path, parent: Path) -> bool:

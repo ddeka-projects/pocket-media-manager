@@ -54,7 +54,7 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 Push-Location $Root
 try {
-    Start-Transcript -Path $LogFile -Append | Out-Null
+    Start-Transcript -Path $LogFile | Out-Null
     Write-Host "Starting Pocket Media Manager PC Helper on ${HostName}:${Port}"
     & $Python -m uvicorn app.main:app --host $HostName --port $Port
 }

@@ -42,6 +42,7 @@ SERVER_HOST=0.0.0.0
 SERVER_PORT=8787
 STREAM_FOLDER=_stream
 SUPPORTED_EXTENSIONS=.mp4,.mkv,.mov,.avi,.webm
+MPV_PATH=mpv
 ```
 
 `PUBLIC_BASE_URL` must use the PC's LAN IP, not `localhost`, because the phone
@@ -53,6 +54,12 @@ VLC is the default. When VLC is selected, the browser opens a `vlc://` deep
 link that launches VLC on the phone. When mpv is selected, the server launches
 mpv as a local subprocess on the PC, pointing directly at the file. The
 feedback flow is identical for both players.
+
+`MPV_PATH` sets the path to the mpv executable. Defaults to `mpv`, which works
+when mpv is on the system PATH. Set the full path (e.g.
+`MPV_PATH=C:\Program Files\mpv\mpv.exe`) when mpv is not on PATH — this is
+especially important for the scheduled startup task, which runs as SYSTEM and
+does not inherit your user PATH.
 
 `STREAM_FOLDER` names a direct-play folder inside `MEDIA_ROOT`. With the
 default value, the folder is `MEDIA_ROOT\_stream`. Files in this folder are for
@@ -96,11 +103,14 @@ not depend on your account being signed in. It reads `SERVER_HOST` and
 http://0.0.0.0:8787
 ```
 
-Logs are appended to:
+Logs are written to:
 
 ```text
 pc-helper\.tmp\server.log
 ```
+
+The log file is overwritten each time the server starts, so it only contains
+output from the current session. Check it after a problem to see what happened.
 
 If you edit `.env` after the startup task is installed, restart the task from an
 elevated PowerShell so the running helper loads the new settings:
