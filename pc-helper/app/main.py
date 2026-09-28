@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 from html import escape
 import json
+import subprocess
 from threading import RLock
 from urllib.parse import urlencode
 
@@ -166,6 +167,25 @@ def _page(title: str, body: str) -> HTMLResponse:
     }}
     button.secondary, a.secondary {{ background: white; color: #181818; }}
     button.danger {{ border-color: #9d2020; background: #9d2020; }}
+    .player-toggle {{
+      display: flex;
+      gap: .5rem;
+      justify-content: center;
+    }}
+    .player-toggle button {{
+      width: auto;
+      padding: .5rem 1.2rem;
+      border-radius: 999px;
+      font-size: .85rem;
+      border: 1px solid #bcbcb5;
+      background: white;
+      color: #181818;
+    }}
+    .player-toggle button.active {{
+      border-color: #181818;
+      background: #181818;
+      color: white;
+    }}
   </style>
 </head>
 <body>
@@ -177,20 +197,13 @@ def _page(title: str, body: str) -> HTMLResponse:
     )
 
 
-def build_infuse_url(stream_url: str, filename: str) -> str:
-    query = urlencode({"url": stream_url, "filename": filename})
-    return f"infuse://x-callback-url/play?{query}"
-
-
 def build_vlc_url(stream_url: str) -> str:
     query = urlencode({"url": stream_url})
     return f"vlc-x-callback://x-callback-url/stream?{query}"
 
 
-def build_player_url(settings: Settings, stream_url: str, filename: str) -> str:
-    if settings.player == "vlc":
-        return build_vlc_url(stream_url)
-    return build_infuse_url(stream_url, filename)
+def _launch_mpv(file_path: Path) -> None:
+    subprocess.Popen(["mpv", str(file_path)])
 
 
 def _is_under(path: Path, parent: Path) -> bool:
@@ -251,17 +264,25 @@ def _home_page(settings: Settings) -> HTMLResponse:
     return _page(
         "Pocket Media Manager",
         f"""<h1>Pocket Media Manager</h1>
+<div class="player-toggle">
+  <button type="button" class="active" data-player="vlc">VLC (Phone)</button>
+  <button type="button" data-player="mpv">mpv (PC)</button>
+</div>
 <div class="stack">
   <form method="post" action="/recommend">
+    <input type="hidden" name="player" value="vlc">
     <button type="submit">Recommend</button>
   </form>
   <form method="get" action="/select">
+    <input type="hidden" name="player" value="vlc">
     <button class="secondary" type="submit">Recommend with Selections</button>
   </form>
   <form method="get" action="/stream">
+    <input type="hidden" name="player" value="vlc">
     <button class="secondary" type="submit">Stream</button>
   </form>
   <form method="get" action="/explore">
+    <input type="hidden" name="player" value="vlc">
     <button class="secondary" type="submit">Explore</button>
   </form>
   <form method="get" action="/scoreboard">
@@ -276,7 +297,20 @@ def _home_page(settings: Settings) -> HTMLResponse:
   <form method="get" action="/reset">
     <button class="secondary" type="submit">Reset Preferences</button>
   </form>
-</div>""",
+</div>
+<script>
+  document.querySelectorAll("[data-player]").forEach(function (btn) {{
+    btn.addEventListener("click", function () {{
+      document.querySelectorAll("[data-player]").forEach(function (b) {{
+        b.classList.remove("active");
+      }});
+      btn.classList.add("active");
+      document.querySelectorAll('input[name="player"]').forEach(function (input) {{
+        input.value = btn.dataset.player;
+      }});
+    }});
+  }});
+</script>""",
     )
 
 
@@ -536,15 +570,10 @@ def _select_from_files(
     state.set_feedback_return_path(feedback_return_path)
     token = state.create_stream_token(selected)
     stream_url = _stream_url(settings, token)
-    infuse_url = build_infuse_url(stream_url, selected.name)
-    player_url = build_player_url(settings, stream_url, selected.name)
     return {
         "file_name": selected.name,
         "path": str(selected),
         "stream_url": stream_url,
-        "infuse_url": infuse_url,
-        "player": settings.player,
-        "player_url": player_url,
     }
 
 
@@ -786,8 +815,10 @@ def _stream_page(settings: Settings, relative_path: str | None = None) -> HTMLRe
           return response.json();
         }})
         .then(function (payload) {{
-          window.location.href = payload.player_url;
-          status.textContent = "";
+          if (payload.player_url) {{
+            window.location.href = payload.player_url;
+          }}
+          status.textContent = payload.launched ? "Opened in mpv." : "";
         }})
         .catch(function () {{
           status.textContent = "Could not open this file.";
@@ -798,22 +829,26 @@ def _stream_page(settings: Settings, relative_path: str | None = None) -> HTMLRe
     )
 
 
-def _stream_play_payload(settings: Settings, relative_path: str) -> dict[str, str]:
+def _stream_play_payload(settings: Settings, relative_path: str) -> dict[str, Any]:
     selected = _stream_browse_target(settings, relative_path)
     if not selected.exists() or not selected.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stream media file missing")
     if selected.suffix.lower() not in settings.supported_extensions:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unsupported stream media file")
 
+    player = state.get_active_player()
+    if player == "mpv":
+        _launch_mpv(selected)
+        return {
+            "file_name": selected.name,
+            "launched": True,
+        }
+
     token = state.create_stream_token(selected)
     stream_url = _stream_url(settings, token)
     return {
         "file_name": selected.name,
-        "path": str(selected),
-        "stream_url": stream_url,
-        "infuse_url": build_infuse_url(stream_url, selected.name),
-        "player": settings.player,
-        "player_url": build_player_url(settings, stream_url, selected.name),
+        "player_url": build_vlc_url(stream_url),
     }
 
 
@@ -909,9 +944,15 @@ def _list_recommendable_top_level_media_folders(settings: Settings) -> list[Path
 
 def _feedback_page_for_selection(settings: Settings, selected: dict[str, str]) -> HTMLResponse:
     selected_path = Path(selected["path"])
+    player = state.get_active_player()
+    player_url: str | None = None
+    if player == "mpv":
+        _launch_mpv(selected_path)
+    else:
+        player_url = build_vlc_url(selected["stream_url"])
     return _feedback_page(
         selected["file_name"],
-        selected["player_url"],
+        player_url,
         other_available=not _has_other_feedback_for_file(settings, selected_path),
     )
 
@@ -1032,12 +1073,13 @@ def scoreboard() -> HTMLResponse:
 
 
 @app.get("/stream", response_class=HTMLResponse)
-def stream_browse(path: str | None = None) -> HTMLResponse:
+def stream_browse(path: str | None = None, player: str = "vlc") -> HTMLResponse:
+    state.set_active_player(player)
     return _stream_page(_settings(), path)
 
 
 @app.post("/stream/play")
-def play_stream_file(path: str = Form(...)) -> dict[str, str]:
+def play_stream_file(path: str = Form(...)) -> dict[str, Any]:
     return _stream_play_payload(_settings(), path)
 
 
@@ -1080,14 +1122,16 @@ def save_feedback_addressed(line_numbers: list[int] = Form(default=[])) -> Redir
 
 
 @app.post("/recommend", response_class=HTMLResponse)
-def recommend_from_browser() -> HTMLResponse:
+def recommend_from_browser(player: str = Form("vlc")) -> HTMLResponse:
+    state.set_active_player(player)
     settings = _settings()
     selected = _select_next(settings)
     return _feedback_page_for_selection(settings, selected)
 
 
 @app.get("/explore", response_class=HTMLResponse)
-def explore(path: str | None = None) -> HTMLResponse:
+def explore(path: str | None = None, player: str = "vlc") -> HTMLResponse:
+    state.set_active_player(player)
     return _explore_page(_settings(), path)
 
 
@@ -1099,7 +1143,8 @@ def play_explored_file(path: str = Form(...)) -> HTMLResponse:
 
 
 @app.get("/select", response_class=HTMLResponse)
-def select_folders() -> HTMLResponse:
+def select_folders(player: str = "vlc") -> HTMLResponse:
+    state.set_active_player(player)
     return _selection_page(_settings())
 
 
@@ -1143,21 +1188,27 @@ def recommend_from_selected_folders(folders: list[str] = Form(default=[])) -> HT
     return _feedback_page_for_selection(settings, selected)
 
 
-@app.get("/next", response_model=None)
-def next_video(redirect: str | None = None) -> dict[str, Any] | RedirectResponse:
+@app.get("/next")
+def next_video(player: str = "vlc") -> dict[str, Any]:
+    state.set_active_player(player)
     settings = _settings()
     selected = _select_next(settings)
-    if redirect == "infuse":
-        return RedirectResponse(selected["infuse_url"])
+    active = state.get_active_player()
 
-    return {
+    result: dict[str, Any] = {
         "file_name": selected["file_name"],
         "stream_url": selected["stream_url"],
-        "infuse_url": selected["infuse_url"],
-        "player": selected["player"],
-        "player_url": selected["player_url"],
+        "player": active,
         "feedback": _feedback_urls(settings),
     }
+
+    if active == "mpv":
+        _launch_mpv(Path(selected["path"]))
+        result["launched"] = True
+    else:
+        result["player_url"] = build_vlc_url(selected["stream_url"])
+
+    return result
 
 
 @app.get("/stream/{token}")

@@ -4,8 +4,8 @@ This helper runs on the Windows PC that stores your media. It scans your media
 folder, chooses a weighted recommendation using your existing rules, serves the
 chosen file over the local network, and accepts simple phone feedback.
 
-Playback itself is delegated to Infuse or VLC. The helper is the recommendation
-and streaming bridge, not a custom video player.
+Playback itself is delegated to VLC (phone) or mpv (PC). The helper is the
+recommendation and streaming bridge, not a custom video player.
 
 ## How The Pieces Connect
 
@@ -13,8 +13,8 @@ and streaming bridge, not a custom video player.
 2. The helper scans `MEDIA_ROOT`, loads `_mpv_prefs.json`, and picks a video.
 3. The helper records play count and `last_played` immediately.
 4. The helper creates a temporary stream token.
-5. The phone opens the configured player while the browser stays on a feedback
-   page.
+5. The chosen player opens: VLC on the phone via deep link, or mpv locally on
+   the PC via subprocess. The browser stays on a feedback page.
 6. After watching, you switch back to the browser and choose Like, Dislike,
    Pending, Skip, or Something Else.
 
@@ -40,7 +40,6 @@ MEDIA_ROOT=E:\Hobby Disk
 PUBLIC_BASE_URL=http://192.168.1.50:8787
 SERVER_HOST=0.0.0.0
 SERVER_PORT=8787
-PLAYER=infuse
 STREAM_FOLDER=_stream
 SUPPORTED_EXTENSIONS=.mp4,.mkv,.mov,.avi,.webm
 ```
@@ -48,10 +47,12 @@ SUPPORTED_EXTENSIONS=.mp4,.mkv,.mov,.avi,.webm
 `PUBLIC_BASE_URL` must use the PC's LAN IP, not `localhost`, because the phone
 needs to reach the PC.
 
-`PLAYER` controls which app the `Recommend` button opens. Supported values are
-`infuse` and `vlc`. Infuse is the default because it has already worked cleanly
-in this setup. Set `PLAYER=vlc` to try VLC with the same recommendation and
-feedback flow.
+The player is chosen from the home page, not from `.env`. A toggle at the top
+of the home page lets you switch between **VLC (Phone)** and **mpv (PC)**.
+VLC is the default. When VLC is selected, the browser opens a `vlc://` deep
+link that launches VLC on the phone. When mpv is selected, the server launches
+mpv as a local subprocess on the PC, pointing directly at the file. The
+feedback flow is identical for both players.
 
 `STREAM_FOLDER` names a direct-play folder inside `MEDIA_ROOT`. With the
 default value, the folder is `MEDIA_ROOT\_stream`. Files in this folder are for
@@ -159,21 +160,22 @@ The main phone workflow is the helper home page:
 http://<PC_LAN_IP>:8787/
 ```
 
-Tap `Recommend`. The helper selects a video, records the play, opens Infuse or
-VLC depending on `PLAYER`, and leaves the browser on a feedback page.
+Choose **VLC (Phone)** or **mpv (PC)** from the toggle at the top of the home
+page, then tap `Recommend`. The helper selects a video, records the play, opens
+the chosen player, and leaves the browser on a feedback page.
 
 Tap `Stream` when you want to browse `MEDIA_ROOT\STREAM_FOLDER` directly
 without entering the recommendation and feedback cycle. Stream looks like
 Explore, with sticky `Back` and `Home` controls, but tapping a media file only
-opens the configured player. The browser stays on the Stream listing, so you
-can return from Infuse or VLC and continue with the next episode. Stream plays
-supported media files only and does not update `_mpv_prefs.json`, play count,
-last played time, likes, dislikes, pending, or Something Else feedback.
+opens the chosen player. The browser stays on the Stream listing, so you
+can continue with the next episode. Stream plays supported media files only
+and does not update `_mpv_prefs.json`, play count, last played time, likes,
+dislikes, pending, or Something Else feedback.
 
 Tap `Explore` when you want to browse `MEDIA_ROOT` manually. Explore shows
 folders that contain supported media somewhere below them and shows only files
 with extensions from `SUPPORTED_EXTENSIONS`. Choosing a file records play
-metadata, opens the configured player, and then uses the same feedback flow as
+metadata, opens the chosen player, and then uses the same feedback flow as
 recommendations. The top of Explore shows the full `MEDIA_ROOT` path at the
 root and relative folder names inside subfolders. Use the sticky `Home` button
 to leave Explore; subfolders also show a sticky `Back` button. Files with
@@ -287,13 +289,14 @@ You can still use Shortcuts if you want. Create a shortcut named
 http://<PC_LAN_IP>:8787/next
 ```
 
-2. Get `player_url` from the JSON response.
-3. Open URL.
+2. Get `player_url` from the JSON response (VLC) or check `launched` (mpv).
+3. Open the URL (VLC) or confirm mpv launched (mpv).
 
-If you want the shortest possible shortcut, open this URL directly:
+Pass `?player=vlc` (default) or `?player=mpv` to choose the player:
 
 ```text
-http://<PC_LAN_IP>:8787/next?redirect=infuse
+http://<PC_LAN_IP>:8787/next?player=vlc
+http://<PC_LAN_IP>:8787/next?player=mpv
 ```
 
 Create feedback shortcuts:
@@ -319,8 +322,8 @@ which item was last recommended.
 - `GET /`
   Returns the minimal browser control page.
 - `POST /recommend`
-  Browser action that selects a recommendation, opens the configured player,
-  and shows feedback buttons.
+  Browser action that selects a recommendation, opens the chosen player (VLC
+  deep link or mpv subprocess), and shows feedback buttons.
 - `GET /explore`
   Shows a manual browser rooted at `MEDIA_ROOT`.
 - `GET /explore?path=...`
@@ -333,9 +336,8 @@ which item was last recommended.
 - `GET /stream?path=...`
   Shows a subfolder under the Stream folder.
 - `POST /stream/play`
-  Creates a temporary playback token for a selected Stream file and returns the
-  configured player URL without recording recommendation metadata or showing
-  feedback.
+  Creates a temporary playback token for a selected Stream file and opens the
+  chosen player without recording recommendation metadata or showing feedback.
 - `GET /scoreboard`
   Shows recommend-able media files ranked by current numerical score.
 - `GET /cleanup`
@@ -345,10 +347,9 @@ which item was last recommended.
   Removes selected orphan records from `_mpv_prefs.json` and returns to the
   home page. Existing media records are kept.
 - `GET /next`
-  Picks and records a recommendation, then returns `stream_url`, `infuse_url`,
-  configured `player`, `player_url`, and feedback URLs.
-- `GET /next?redirect=infuse`
-  Picks and records a recommendation, then redirects straight to Infuse.
+  Picks and records a recommendation, then returns `stream_url`, `player`,
+  `player_url` (VLC) or `launched` (mpv), and feedback URLs. Accepts an
+  optional `player` query param (`vlc` or `mpv`, default `vlc`).
 - `GET /stream/{token}`
   Streams a token-mapped file. The helper keeps the latest 30 playback tokens
   in memory; older links naturally expire and return 404, the same as unknown
@@ -448,6 +449,6 @@ pile of old stream URLs active.
 This personal helper no longer carries an automated test suite. For changes,
 run the development server and try the affected workflow from your phone or
 from the local browser. The key manual checks are that the home page opens,
-recommendations launch the configured player, feedback returns to the expected
+recommendations launch the chosen player, feedback returns to the expected
 page, and maintenance screens such as Scoreboard, Address Other Feedback, and
 Clean Up show the expected data.

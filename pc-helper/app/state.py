@@ -13,6 +13,8 @@ AWAITING_FEEDBACK = False
 AWAITING_OTHER_FEEDBACK = False
 SELECTED_FOLDER_NAMES: list[str] = []
 FEEDBACK_RETURN_PATH = "/"
+SUPPORTED_PLAYERS = {"vlc", "mpv"}
+ACTIVE_PLAYER = "vlc"
 
 
 def set_last_recommended(file_path: Path) -> None:
@@ -80,6 +82,15 @@ def create_stream_token(file_path: Path) -> str:
 def get_stream_path(token: str) -> Path | None:
     with STREAM_TOKENS_LOCK:
         return STREAM_TOKENS.get(token)
+
+
+def set_active_player(player: str) -> None:
+    global ACTIVE_PLAYER
+    ACTIVE_PLAYER = player if player in SUPPORTED_PLAYERS else "vlc"
+
+
+def get_active_player() -> str:
+    return ACTIVE_PLAYER
 
 
 def clear_state() -> None:

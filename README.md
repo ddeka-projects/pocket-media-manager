@@ -26,15 +26,14 @@ Open Git Bash in `pc-helper/` and run:
 ./scripts/bootstrap.sh
 ```
 
-Then edit `pc-helper\.env` so `PUBLIC_BASE_URL` uses this PC's LAN IP address
-and `PLAYER` names the phone player to open:
+Then edit `pc-helper\.env` so `PUBLIC_BASE_URL` uses this PC's LAN IP address:
 
 ```text
 PUBLIC_BASE_URL=http://192.168.1.50:8787
-PLAYER=infuse
 ```
 
-Use `PLAYER=vlc` to test VLC instead.
+The player is chosen from the home page UI (VLC for phone, mpv for PC), not
+from `.env`.
 
 For everyday phone use, install the Windows startup task once from an elevated
 PowerShell opened in `pc-helper`:
@@ -89,7 +88,8 @@ For this personal app, validation is intentionally ad-hoc: run the helper and
 try the workflow from your phone instead of maintaining an automated test
 suite.
 
-Tap `Recommend` to open the configured player. Use `Recommend with Selections`
+Choose **VLC (Phone)** or **mpv (PC)** from the toggle on the home page, then
+tap `Recommend` to open the chosen player. Use `Recommend with Selections`
 when you want to choose one or more top-level folders under the configured media
 root for a single recommendation. Use `Stream` when you want to browse the
 configured `STREAM_FOLDER` under the media root and play files directly without
