@@ -80,9 +80,9 @@ the selections. No recommendation profiles remain.
 
 **Explore** shows catalogued folders and files alphabetically. Choosing a file
 records an encounter and opens the player; feedback returns to the same folder.
-**Preferences / Test** opens the clip's lasting settings and Test Playback.
-Testing records a distinct encounter but is excluded from recommendation
-history. Any explicit Favorite or lasting preference change still saves.
+There is no separate Clip Preferences screen or Test Playback mode. If you are
+testing a file, open it normally and choose No feedback. That records the offer
+but adds no enjoyment or negative rating; the usual brief repeat penalty applies.
 
 **Stream** browses `MEDIA_ROOT\STREAM_FOLDER` directly. Files there are outside
 the recommendation catalog and encounter history. Opening a file leaves the
@@ -103,11 +103,32 @@ When the player opens, the browser displays feedback:
   closes the encounter without ordinary feedback and hides that file from
   recommendations and Explore until addressed.
 
-Clip Preferences lets you undo Less often or Not for me and change Favorite.
+The feedback page lets you change Favorite and, when relevant, offers
+**Restore normal frequency** and **Allow recommendations again**. To reverse a
+lasting preference, open the clip through Explore and use those controls before
+submitting a response. They save immediately without closing the encounter.
 Enjoyed it does not silently undo either lasting preference. The single engine
 boosts Favorites and repeated positive reports (with a cap), reduces frequency
 for Less often, and gives recently enjoyed clips breathing room. An unrated
 playback offer gets only a brief repeat penalty, not a viewing count.
+
+The current tuning is a starting point:
+
+| Action | Current recommendation effect |
+| --- | --- |
+| Favorite | A fourfold base-weight boost while enabled; timing and exclusion rules still apply. |
+| Enjoyed it | Builds lasting interest, capped at five positive reports. Recent enjoyment also reduces repeat priority, gradually returning to normal over 24 hours. |
+| Too soon | A full 24-hour pause from the response time, including for Favorites. |
+| Not in the mood | Excludes the clip for the current browser session, until session expiry or Start New Session. |
+| Less often | Reduces its weight to one quarter until Restore normal frequency is used. |
+| Not for me | Excludes it until Allow recommendations again is used. Explore remains available. |
+| No feedback | Adds no rating or lasting preference. The ordinary offer still receives a brief five-minute repeat penalty. |
+| Something Else | Excludes the file from recommendations and Explore until its task is addressed. |
+
+Weights influence random selection, not a guaranteed number of appearances.
+Enjoyed it discourages immediate repeats but does not impose the strict pause
+used by Too soon. Restoring a lasting preference does not cancel other timing
+or maintenance restrictions.
 
 If nothing is currently eligible, the app explains why; it does not quietly
 override your responses. You can manually choose a clip through Explore,
@@ -160,8 +181,8 @@ same path can reuse its existing record. Failed or partial scans preserve the
 previous catalog instead of marking everything missing.
 
 **Address Other Feedback** groups outstanding tasks by Remake/Fix/Trim/Hold.
-Checking items and saving marks them resolved. Test Playback is available from
-the task's Preferences page, including while the file is blocked.
+Checking items and saving marks them resolved. Reopen the file through Explore
+after resolving its task; choose No feedback if you only want to check playback.
 
 **Clean Up** removes only selected unavailable records and their encounters,
 never media files. Records with unresolved tasks are withheld from cleanup.
@@ -230,6 +251,8 @@ Old like/dislike/pending/skip shortcuts need updating.
 - `POST /feedback/{response}` with `encounter_id`: `enjoyed`, `too_soon`,
   `not_in_mood`, `less_often`, `not_for_me`, or `no_feedback`.
 - `POST /feedback/favorite` with `encounter_id` and `favorite=true/false`.
+- `POST /feedback/restore` with `encounter_id` and `preference=less_often` or
+  `preference=not_for_me`: clear that lasting preference without closing feedback.
 - `POST /feedback/other/save` with `encounter_id` and `feedback_type`:
   `remake`, `fix`, `trim`, or `hold`.
 - `GET /feedback/{encounter_id}`: resume browser feedback without relaunching.
@@ -254,4 +277,5 @@ Actual VLC playback and Windows mpv launching need a device/PC check. The helper
 does not transcode files; codec support belongs to the player. `.ts` is in the
 default extension list, but an existing `SUPPORTED_EXTENSIONS` override needs
 `.ts` added explicitly. There is no automatic clip matching, legacy migration,
-profile selector, watch-completion tracking, or continuously refreshed catalog.
+profile selector, separate preference/test screen, watch-completion tracking,
+or continuously refreshed catalog.

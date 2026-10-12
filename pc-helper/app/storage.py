@@ -281,6 +281,8 @@ class Database:
 
     def create_encounter(self, media_id: int, browser_id: str, session_id: str,
                          source: str, context: dict[str, Any]) -> dict[str, Any]:
+        if source not in {"recommend", "selected", "explore"}:
+            raise ValueError("Unknown encounter source")
         encounter_id = uuid.uuid4().hex
         with self.connect(write=True) as conn:
             conn.execute("""INSERT INTO encounters
@@ -313,15 +315,6 @@ class Database:
                 WHERE id=? AND browser_id=?""",
                 (now_iso(), "failed" if error else "requested", error, encounter_id, browser_id))
 
-    def set_preferences(self, media_id: int, **changes: bool) -> None:
-        if not changes or not changes.keys() <= {"favorite", "less_often", "not_for_me"}:
-            raise ValueError("Invalid preference fields")
-        with self.connect(write=True) as conn:
-            result = conn.execute("UPDATE media SET " + ",".join(f"{name}=?" for name in changes)
-                                  + " WHERE id=?", (*[int(value) for value in changes.values()], media_id))
-            if not result.rowcount:
-                raise KeyError("Media record not found")
-
     def submit_feedback(self, encounter_id: str, browser_id: str, feedback: str) -> dict[str, Any]:
         if feedback not in FEEDBACK and feedback != "no_feedback":
             raise ValueError("Unknown feedback")
@@ -343,15 +336,18 @@ class Database:
                 self._touch_encounter_session(conn, row)
         return self.encounter(encounter_id, browser_id)
 
-    def favorite_for_encounter(self, encounter_id: str, browser_id: str, favorite: bool) -> None:
+    def preference_for_encounter(self, encounter_id: str, browser_id: str,
+                                 preference: str, enabled: bool) -> None:
+        if preference not in {"favorite", "less_often", "not_for_me"}:
+            raise ValueError("Unknown preference")
         with self.connect(write=True) as conn:
             row = conn.execute("SELECT * FROM encounters WHERE id=? AND browser_id=?",
                                (encounter_id, browser_id)).fetchone()
             if not row:
                 raise KeyError("Encounter not found in this browser")
             if row["resolution"] != "open":
-                raise Conflict("This encounter is already closed; edit Clip Preferences instead")
-            conn.execute("UPDATE media SET favorite=? WHERE id=?", (int(favorite), row["media_id"]))
+                raise Conflict("This encounter is already closed; open the clip through Explore to change its preferences")
+            conn.execute(f"UPDATE media SET {preference}=? WHERE id=?", (int(enabled), row["media_id"]))
             self._touch_encounter_session(conn, row)
 
     def submit_other(self, encounter_id: str, browser_id: str, feedback_type: str) -> dict[str, Any]:

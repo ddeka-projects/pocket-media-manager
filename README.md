@@ -60,9 +60,9 @@ Start-ScheduledTask -TaskName "Pocket Media Manager PC Helper"
 - **Recommend with Selections** restricts that same engine to selected top-level
   folders and their descendants. Your selections remain checked after feedback.
 - **Explore** browses the catalog and lets you pick a clip directly. Feedback
-  returns you to its folder. Clip Preferences lets you change Favorite, restore
-  normal frequency, or undo Not for me. Test Playback excludes that encounter
-  from recommendation learning.
+  returns you to its folder. All preference controls are on the feedback page;
+  it offers restoration controls when Less often or Not for me is set. Use
+  No feedback when testing a file. There is no separate preferences or test page.
 - **Stream** browses the separate `_stream` folder. It records no encounters or
   preference feedback and leaves you on the listing for the next episode.
 - **Address Other Feedback** resolves outstanding Remake/Fix/Trim/Hold tasks,

@@ -195,7 +195,7 @@ def _launch(request: Request, encounter: dict) -> dict:
               "player": encounter["context"]["player"], "launched": False}
     try:
         path = database.verify_media(encounter["media_id"])
-        if database.blocked(encounter["media_id"]) and encounter["source"] != "test":
+        if database.blocked(encounter["media_id"]):
             raise ValueError("This file has outstanding Something Else feedback")
         if result["player"] == "mpv":
             _launch_mpv(_settings(request), path)
@@ -247,10 +247,9 @@ def _feedback_page(request: Request, encounter: dict, launch: dict | None = None
     if encounter["resolution"] != "open":
         return _page("Feedback saved", "<h1>Feedback saved</h1><p>This encounter is already closed.</p>"
                      + _link(encounter["context"]["return_path"], "Continue") + _link("/", "Home"))
-    favorite = _db(request).media(encounter["media_id"])["favorite"]
+    media = _db(request).media(encounter["media_id"])
+    favorite = media["favorite"]
     body = f'<h1>Feedback</h1><p>{escape(Path(encounter["relative_path"]).name)}</p>'
-    if encounter["source"] == "test":
-        body += '<p>Test playback is excluded from recommendation history. Explicit preferences still save.</p>'
     error = launch.get("launch_error") if launch else encounter["launch_error"]
     if error:
         body += f'<p class="error">{escape(error)}</p>'
@@ -260,13 +259,18 @@ def _feedback_page(request: Request, encounter: dict, launch: dict | None = None
     body += _form(f"/encounters/{identifier}/play", "Open Player")
     body += _form("/feedback/favorite", "★ Favorite — remove" if favorite else "☆ Mark as Favorite",
                   {"encounter_id": identifier, "favorite": "0" if favorite else "1"})
+    for preference, label in (("less_often", "Restore normal frequency"),
+                              ("not_for_me", "Allow recommendations again")):
+        if media[preference]:
+            body += _form("/feedback/restore", label,
+                          {"encounter_id": identifier, "preference": preference})
     body += '<div class="stack">'
     for value, label in FEEDBACK.items():
         body += _form("/feedback/" + value, label, {"encounter_id": identifier}, "")
     body += _form("/feedback/no_feedback", "No feedback", {"encounter_id": identifier})
     if not _db(request).blocked(encounter["media_id"]):
         body += _form("/feedback/other", "Something Else", {"encounter_id": identifier})
-    body += '</div>' + _link(f'/media/{encounter["media_id"]}', "Clip Preferences") + _link("/", "Home")
+    body += '</div>' + _link("/", "Home")
     return _page("Feedback", body)
 
 
@@ -436,8 +440,7 @@ def explore(request: Request, path: str | None = None, player: str | None = None
     for folder in sorted(folders, key=str.lower):
         body += _link(_browse_url("explore", prefix + folder), folder)
     for row in files:
-        body += '<div class="row">' + _form("/explore/play", Path(row["relative_path"]).name, {"media_id": row["id"]})
-        body += _link(f'/media/{row["id"]}', "Preferences / Test") + '</div>'
+        body += _form("/explore/play", Path(row["relative_path"]).name, {"media_id": row["id"]})
     body += '</div>'
     if not folders and not files:
         body += '<p>No eligible media here. Refresh Library after adding files.</p>'
@@ -445,40 +448,16 @@ def explore(request: Request, path: str | None = None, player: str | None = None
 
 
 @app.post("/explore/play", response_class=HTMLResponse)
-def play_explored(request: Request, media_id: int = Form(...), test: bool = Form(False)):
+def play_explored(request: Request, media_id: int = Form(...)):
     database = _db(request)
     media = database.media(media_id)
     database.verify_media(media_id)
-    if database.blocked(media_id) and not test:
+    if database.blocked(media_id):
         raise ValueError("This file has outstanding Something Else feedback")
     session_id = database.begin_session(request.state.browser_id)
     parent = media["relative_path"].rsplit("/", 1)[0] if "/" in media["relative_path"] else ""
-    encounter = _encounter(request, media, session_id, "test" if test else "explore", _browse_url("explore", parent))
+    encounter = _encounter(request, media, session_id, "explore", _browse_url("explore", parent))
     return _feedback_page(request, encounter, _launch(request, encounter))
-
-
-@app.get("/media/{media_id}", response_class=HTMLResponse)
-def media_preferences(request: Request, media_id: int):
-    media = _db(request).media(media_id)
-    body = '<h1>Clip Preferences</h1><p>' + escape(media["relative_path"]) + '</p>'
-    body += f'<form method="post" action="/media/{media_id}/preferences" class="stack">'
-    for name, label in (("favorite", "Favorite"), ("less_often", "Recommend less often"), ("not_for_me", "Not for me — exclude from recommendations")):
-        checked = " checked" if media[name] else ""
-        body += f'<label class="check"><input type="checkbox" name="{name}" value="true"{checked}>{label}</label>'
-    body += '<button>Save Preferences</button></form>'
-    if media["available"]:
-        body += _form("/explore/play", "Test Playback", {"media_id": media_id, "test": "true"})
-    else:
-        body += '<p>This file is unavailable or has been replaced.</p>'
-    body += _link("/", "Home") + _link("/explore", "Explore")
-    return _page("Clip Preferences", body)
-
-
-@app.post("/media/{media_id}/preferences")
-def save_preferences(request: Request, media_id: int, favorite: bool = Form(False),
-                     less_often: bool = Form(False), not_for_me: bool = Form(False)):
-    _db(request).set_preferences(media_id, favorite=favorite, less_often=less_often, not_for_me=not_for_me)
-    return RedirectResponse(f"/media/{media_id}", 303)
 
 
 def _stream_files(request: Request, root: Path) -> list[Path]:
@@ -574,8 +553,17 @@ def replay_encounter(request: Request, encounter_id: str):
 
 @app.post("/feedback/favorite")
 def favorite_feedback(request: Request, encounter_id: str = Form(...), favorite: bool = Form(...)):
-    _db(request).favorite_for_encounter(encounter_id, request.state.browser_id, favorite)
+    _db(request).preference_for_encounter(encounter_id, request.state.browser_id, "favorite", favorite)
     return RedirectResponse("/feedback/" + encounter_id, 303) if _html(request) else {"favorite": favorite}
+
+
+@app.post("/feedback/restore")
+def restore_preference(request: Request, encounter_id: str = Form(...), preference: str = Form(...)):
+    if preference not in {"less_often", "not_for_me"}:
+        raise ValueError("Only frequency or recommendation eligibility can be restored here")
+    _db(request).preference_for_encounter(encounter_id, request.state.browser_id, preference, False)
+    return (RedirectResponse("/feedback/" + encounter_id, 303) if _html(request)
+            else {"preference": preference, "enabled": False})
 
 
 @app.post("/feedback/other")
@@ -624,7 +612,6 @@ def addressed_page(request: Request):
             path = task["relative_path"]
             folder = path.split("/", 1)[0] if "/" in path else "MEDIA_ROOT"
             body += f'<label class="check"><input type="checkbox" name="task_ids" value="{task["id"]}"><span><span class="tag">{escape(folder)}</span> {escape(Path(path).name)}</span></label>'
-            body += _link(f'/media/{task["media_id"]}', "Preferences / Test Playback")
     body += '<button>Save Addressed Items</button></form>' if tasks else '</form><p>No outstanding tasks.</p>'
     return _page("Address Other Feedback", body)
 
