@@ -1,39 +1,19 @@
 # Pocket Media Manager PC Helper
 
-This helper runs on the Windows PC that stores your media. It scans your media
-folder, chooses a weighted recommendation using your existing rules, serves the
-chosen file over the local network, and accepts simple phone feedback.
+The helper runs on the Windows PC holding your media. It provides a phone/PC
+browser interface, one recommendation engine, VLC phone streaming, mpv desktop
+playback, and feedback for revisiting favorite moments.
 
-Playback itself is delegated to VLC (phone) or mpv (PC). The helper is the
-recommendation and streaming bridge, not a custom video player.
+## Setup and Windows Startup
 
-## How The Pieces Connect
-
-1. Your phone opens the helper home page and taps `Recommend`.
-2. The helper scans `MEDIA_ROOT`, loads `_mpv_prefs.json`, and picks a video.
-3. The helper records play count and `last_played` immediately.
-4. The helper creates a temporary stream token.
-5. The chosen player opens: VLC on the phone via deep link, or mpv locally on
-   the PC via subprocess. The browser stays on a feedback page.
-6. After watching, you switch back to the browser and choose Like, Dislike,
-   Pending, Skip, or Something Else.
-
-Plex can stay installed for normal library playback, but this workflow does not
-depend on Plex. It exists to preserve your custom recommendation behavior.
-
-## Setup
-
-From Git Bash:
+From Git Bash in this directory:
 
 ```bash
-cd C:\Dev\pocket-media-manager\pc-helper
 ./scripts/bootstrap.sh
 ```
 
-The bootstrap script creates `.venv`, installs dependencies, and creates `.env`
-from `.env.example` if needed.
-
-Edit `.env`:
+The script creates `.venv`, installs dependencies, and copies `.env.example` to
+`.env` if needed. Edit `.env`:
 
 ```text
 MEDIA_ROOT=E:\Hobby Disk
@@ -41,435 +21,237 @@ PUBLIC_BASE_URL=http://192.168.1.50:8787
 SERVER_HOST=0.0.0.0
 SERVER_PORT=8787
 STREAM_FOLDER=_stream
-SUPPORTED_EXTENSIONS=.mp4,.mkv,.mov,.avi,.webm
+SUPPORTED_EXTENSIONS=.mp4,.mkv,.mov,.avi,.webm,.ts
 MPV_PATH=mpv
 ```
 
-`PUBLIC_BASE_URL` must use the PC's LAN IP, not `localhost`, because the phone
-needs to reach the PC.
+`MEDIA_ROOT` must be an existing accessible directory. Relative paths are
+resolved against `pc-helper/`. The helper does not create a missing media root:
+that could hide a typo or a disconnected drive. `STREAM_FOLDER` must be inside
+the media root and cannot be the metadata folder. Directory and file symlinks
+are omitted from catalog scans.
 
-The player is chosen from the home page, not from `.env`. A toggle at the top
-of the home page lets you switch between **VLC (Phone)** and **mpv (PC)**.
-VLC is the default. When VLC is selected, the browser opens a `vlc://` deep
-link that launches VLC on the phone. When mpv is selected, the server launches
-mpv as a local subprocess on the PC, pointing directly at the file. The
-feedback flow is identical for both players.
+Use the PC's LAN address for `PUBLIC_BASE_URL`, not `localhost`. Find it with
+`ipconfig`. Choose VLC or mpv on the home page; each browser remembers that
+choice. Set `MPV_PATH` to the executable's full path if mpv is not on PATH.
 
-`MPV_PATH` sets the path to the mpv executable. Defaults to `mpv`, which works
-when mpv is on the system PATH. Set the full path (e.g.
-`MPV_PATH=C:\Program Files\mpv\mpv.exe`) when mpv is not on PATH — this is
-especially important for the scheduled startup task, which runs as SYSTEM and
-does not inherit your user PATH.
-
-`STREAM_FOLDER` names a direct-play folder inside `MEDIA_ROOT`. With the
-default value, the folder is `MEDIA_ROOT\_stream`. Files in this folder are for
-Stream mode only: they are playable from the `Stream` button but are excluded
-from recommendations, Explore, and `_mpv_prefs.json` updates.
-
-The helper stores recommendation preferences in `MEDIA_ROOT\_mpv_prefs.json`.
-If that file does not exist, it is created the first time preferences are saved.
-
-The browser/app icon is served from `pc-helper\pocket-manager-icon.png`. The
-current 128x128 PNG is linked as the favicon, Apple touch icon, and web
-manifest icon. A 180x180 version can be substituted later if you want the
-sharpest possible iOS home-screen icon.
-
-Find the LAN IP from Windows:
-
-```text
-ipconfig
-```
-
-Look for the IPv4 address on the active Wi-Fi or Ethernet adapter.
-
-## Everyday Windows Startup
-
-For normal use, run the helper as a Windows scheduled task instead of keeping a
-development terminal open. This starts the server when you sign in and keeps it
-available while the PC is awake.
-
-From an elevated PowerShell in `pc-helper`:
+For everyday use, run from an elevated PowerShell in this directory:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1
 ```
 
-The task runs `scripts\run-server.ps1`, which starts Uvicorn without
-development reload mode. The scheduled task runs under your user account with
-an interactive logon, so programs launched by the helper (such as mpv) appear
-on your desktop. It reads `SERVER_HOST` and `SERVER_PORT` from `.env`,
-defaulting to:
-
-```text
-http://0.0.0.0:8787
-```
-
-Logs are written to:
-
-```text
-pc-helper\.tmp\server.log
-```
-
-The log file is overwritten each time the server starts, so it only contains
-output from the current session. Check it after a problem to see what happened.
-
-If you edit `.env` after the startup task is installed, restart the task from an
-elevated PowerShell so the running helper loads the new settings:
+The scheduled task starts the helper when your user signs in and runs in your
+desktop session so mpv is visible. The PC must remain awake and reachable.
+After changing `.env`, restart it:
 
 ```powershell
 Stop-ScheduledTask -TaskName "Pocket Media Manager PC Helper"
 Start-ScheduledTask -TaskName "Pocket Media Manager PC Helper"
 ```
 
-If you want to stop the always-on helper before development work, remove the
-scheduled task from an elevated PowerShell:
+For development, remove the always-on task before starting the reload server:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\remove-startup-task.ps1
 ```
 
-Install it again with `install-startup-task.ps1` when you want to return to the
-always-on phone workflow.
+```bash
+./scripts/run-dev.sh
+```
 
-You can also run the normal no-reload server manually:
+The normal server can also be run manually:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run-server.ps1
 ```
 
-## Development Run
+Open `http://localhost:8787/` on the PC or `http://<PC_LAN_IP>:8787/` on your
+phone. If `/health` is unreachable, check the private-network Windows Firewall
+rule for Python/Uvicorn and that both devices are on the same network. This is
+a private-home-network app; do not expose it to the public internet.
 
-Use the development server when changing the app code:
+## Watching and Giving Feedback
 
-```bash
-./scripts/run-dev.sh
-```
+**Recommend** picks a clip with the one recommendation engine. **Recommend with
+Selections** restricts the pool to checked top-level folders, recursively.
+Selections persist per browser and feedback returns to that page. Cancel clears
+the selections. No recommendation profiles remain.
 
-This starts Uvicorn with reload enabled, which is useful while editing code but
-is not the preferred mode for daily phone playback.
+**Explore** shows catalogued folders and files alphabetically. Choosing a file
+records an encounter and opens the player; feedback returns to the same folder.
+**Preferences / Test** opens the clip's lasting settings and Test Playback.
+Testing records a distinct encounter but is excluded from recommendation
+history. Any explicit Favorite or lasting preference change still saves.
 
-Useful checks:
+**Stream** browses `MEDIA_ROOT\STREAM_FOLDER` directly. Files there are outside
+the recommendation catalog and encounter history. Opening a file leaves the
+browser on its listing so you can return for the next episode.
 
-```text
-http://localhost:8787/
-http://localhost:8787/health
-http://localhost:8787/next
-http://localhost:8787/last
-```
+When the player opens, the browser displays feedback:
 
-If the phone cannot reach `/health`, allow Python/Uvicorn through Windows
-Firewall for private networks and confirm the phone is on the same Wi-Fi. If the
-boot task starts but recommendations find no media, confirm that `MEDIA_ROOT` is
-a local drive available before sign-in; mapped network drives usually belong to a
-signed-in user session and are not visible to `SYSTEM`.
+- **Favorite** is an independent toggle saved immediately, even if you never
+  submit a response. It stays set until explicitly removed.
+- **Enjoyed it** records a positive report for this encounter.
+- **Too soon** pauses this clip's recommendations for 24 hours.
+- **Not in the mood** withholds this clip for the rest of this browser's session.
+- **Less often** sets a lasting reduced-frequency preference.
+- **Not for me** excludes it from recommendations until you undo that preference.
+  It remains accessible through Explore; Favorite does not override exclusion.
+- **No feedback** closes the encounter without expressing an opinion.
+- **Something Else** opens Remake, Fix, Trim, Hold, or Cancel. Saving a task
+  closes the encounter without ordinary feedback and hides that file from
+  recommendations and Explore until addressed.
 
-## Phone Browser Flow
+Clip Preferences lets you undo Less often or Not for me and change Favorite.
+Enjoyed it does not silently undo either lasting preference. The single engine
+boosts Favorites and repeated positive reports (with a cap), reduces frequency
+for Less often, and gives recently enjoyed clips breathing room. An unrated
+playback offer gets only a brief repeat penalty, not a viewing count.
 
-The main phone workflow is the helper home page:
+If nothing is currently eligible, the app explains why; it does not quietly
+override your responses. You can manually choose a clip through Explore,
+restore its preferences, wait for Too soon to expire, or start a new session
+for session-only declines.
 
-```text
-http://<PC_LAN_IP>:8787/
-```
+## Encounters, Sessions, and Restarts
 
-Choose **VLC (Phone)** or **mpv (PC)** from the player toggle at the top of
-the home page. Below it, choose a recommendation profile: **Balanced**
-(default), **Surprise Me**, **Comfort Zone**, or **Pending Review**. Then
-tap `Recommend`. The helper selects a video using the chosen profile, records
-the play, opens the chosen player, and leaves the browser on a feedback page.
+An encounter is created before opening the player. It records the file,
+selection time, browser, session, source, player, selected folders, return page,
+playback request/failure, and eventually feedback. Launching mpv or sending a
+VLC link does not prove the video was watched or completed. Watch duration and
+completion are not measured.
 
-Tap `Stream` when you want to browse `MEDIA_ROOT\STREAM_FOLDER` directly
-without entering the recommendation and feedback cycle. Stream looks like
-Explore, with sticky `Back` and `Home` controls, but tapping a media file only
-opens the chosen player. The browser stays on the Stream listing, so you
-can continue with the next episode. Stream plays supported media files only
-and does not update `_mpv_prefs.json`, play count, last played time, likes,
-dislikes, pending, or Something Else feedback.
+Feedback forms carry the encounter ID. Repeating the same response is safe;
+submitting a different response to a closed encounter is rejected. There is no
+global "last recommendation" shared by devices.
 
-Tap `Explore` when you want to browse `MEDIA_ROOT` manually. Explore shows
-folders that contain supported media somewhere below them and shows only files
-with extensions from `SUPPORTED_EXTENSIONS`. Choosing a file records play
-metadata, opens the chosen player, and then uses the same feedback flow as
-recommendations. The top of Explore shows the full `MEDIA_ROOT` path at the
-root and relative folder names inside subfolders. Use the sticky `Home` button
-to leave Explore; subfolders also show a sticky `Back` button. Files with
-unresolved Something Else feedback are hidden from Explore, and the configured
-Stream folder is hidden because it has its own direct-play workflow. After you
-submit feedback for an explored file, the browser returns to the same Explore
-folder that contained that file so you can continue browsing from there.
+A persistent browser cookie identifies its saved settings. Phone and PC
+browsers have separate sessions, while the library and lasting preferences are
+shared. A session begins with an encounter request and is reused while there
+has been less than 30 minutes of inactivity. Encounter requests, timely feedback,
+and Favorite changes during an active encounter extend activity. Page refreshes
+do not. **Start New Session** resets this browser's sitting explicitly.
 
-Tap `Clean Up` when you want to remove orphan records from
-`MEDIA_ROOT\_mpv_prefs.json`. The page lists preference records whose saved
-file path is no longer present under `MEDIA_ROOT`, such as an older lower
-quality copy you deleted after replacing it. Each row shows the top-level
-folder as a tag and the media filename. Select the orphan rows you want removed
-and tap `Clean`; `Cancel` returns home without changing the preference file.
+Late feedback stays with its original encounter and does not revive an expired
+session. Restarting the helper alone does not end an active session. Unfinished
+encounters remain open: Home offers Resume Feedback, Close without feedback,
+and All Unfinished Feedback. You can also keep browsing without answering.
+Resume does not automatically relaunch the player; use Open Player when needed.
 
-Tap `Recommend with Selections` when you want to limit one recommendation to
-specific top-level folders under `MEDIA_ROOT`. The selection page shows the
-configured media root at the top, then only shows top-level folders that contain
-at least one supported media file. Files are found recursively inside those
-selected folders. For example, selecting `Anime` can still recommend files under
-`Anime\Attack on Titan`, while `Attack on Titan` itself is not shown as a
-checkbox. This is also the way to avoid folders you do not want included in a
-given recommendation. The top controls stay visible while you scroll: use
-`Recommend` to start from the checked folders, `Cancel` to return home, and
-`Select All` or `Deselect All` to toggle the folder checkboxes in one tap.
+Clearing cookies or changing browsers gives you a new browser identity and
+does not expose the previous browser's unfinished feedback. Its records still
+exist in the database. Cookies must be retained for API feedback as well.
 
-After feedback for a selected recommendation, the browser returns to the
-selection page with the same eligible folders still checked. This lets you keep
-asking for recommendations from the same subset. Use `Cancel` on the selection
-page to clear that saved selection and return to the home page.
+## Catalog and Maintenance
 
-When you switch back to the browser, choose:
+A complete catalog scan runs at startup. Ordinary Recommend, Selections,
+feedback, and Explore operations use SQLite rather than rescanning the media
+tree or rewriting JSON documents. Use **Refresh Library** after adding,
+moving, editing, or deleting files. Refresh is a full scan and can take time on
+a large disk. There is no continuous filesystem watcher.
 
-- `Like`
-  Boosts that file in future recommendations. Use this when you enjoyed the
-  item and are happy for it to come back.
-- `Dislike`
-  Strongly penalizes that file without banning it. A dislike carries more
-  weight than a like in the opposite direction.
-- `Pending`
-  Marks it as something to revisit and gives it a smaller boost than Like.
-- `Skip`
-  Records no preference feedback. The play count and `last_played` timestamp
-  from the recommendation are still already recorded.
-- `Something Else`
-  Opens `Describe Change Required`, where you must choose `Remake`, `Fix`,
-  `Trim`, `Hold`, or `Cancel`. Choosing one of the four change types writes an
-  entry to `other_feedback.jsonl` under `MEDIA_ROOT` without changing
-  like/dislike/pending counts. `Cancel` returns to the normal feedback page.
-  If the same file already has unresolved Something Else feedback, the action
-  is withheld until that entry is addressed.
+`available` means the last successful check found that file. It is separate from
+Favorite, disinterest, or maintenance blocks. Before playback, the chosen file
+is checked again. A changed file's old record is made unavailable; Refresh
+Library creates the replacement record with fresh preferences. Moving or
+renaming a file also starts a fresh record. An unchanged file returning to the
+same path can reuse its existing record. Failed or partial scans preserve the
+previous catalog instead of marking everything missing.
 
-After feedback is completed, the browser returns to the home page and
-`Recommend` is available again. If the recommendation came from selected
-folders, it returns to the selection page with those folders still checked. If
-the file was opened through Explore, it returns to that file's Explore folder.
+**Address Other Feedback** groups outstanding tasks by Remake/Fix/Trim/Hold.
+Checking items and saving marks them resolved. Test Playback is available from
+the task's Preferences page, including while the file is blocked.
 
-Something Else entries are appended to:
+**Clean Up** removes only selected unavailable records and their encounters,
+never media files. Records with unresolved tasks are withheld from cleanup.
+**Reset Preferences** confirms before clearing all Favorites, Less often,
+Not for me, and encounters across browsers. The catalog, player/selections,
+and Something Else tasks remain; session IDs are reset. Both operations save
+a database backup first.
+
+## Storage and Backups
+
+All generated app metadata is in:
 
 ```text
-MEDIA_ROOT\other_feedback.jsonl
+MEDIA_ROOT\.pocket-media-manager\
+  pocket-media.sqlite3
+  backups\
+  logs\
 ```
 
-Entries use JSON Lines: one JSON object per line.
+SQLite manages its journal/WAL companion files alongside the database. The
+metadata folder is excluded from all media browsing and catalog scans. No
+separate database server is needed. Four application tables are used:
 
-```json
-{"path":"E:\\Hobby Disk\\Anime\\Steins Gate\\Steins Gate Opening.mp4","type":"remake","created_at":"2026-06-11T10:00:00"}
-```
+| Table | Stored data |
+| --- | --- |
+| `media` | Relative path, file size, precise modification timestamp, discovery time, availability, Favorite, Less often, Not for me. |
+| `encounters` | Browser/session, media record, selection and playback-request timestamps, source/context, launch outcome/error, one response, resolution, close time. |
+| `other_feedback` | Media record, task type, creation time, resolution time. |
+| `settings` | Per-browser player/selections/session activity, catalog refresh and backup bookkeeping. |
 
-Supported `type` values are `remake`, `fix`, `trim`, and `hold`. While an entry
-exists, that file is not eligible for `Recommend`, `Recommend with Selections`,
-or `Explore`.
+Times are stored in UTC and displayed in the browser's local timezone. File
+modification is stored as nanoseconds (`modified_ns`) to detect in-place edits.
+There are no separate preference, score, summary, or feedback JSON files.
 
-Use `Address Other Feedback` on the home page after reviewing Something Else
-feedback. It groups items by `Remake`, `Fix`, `Trim`, and `Hold`. Each row
-shows the top-level folder as a tag and the media filename, such as
-`[Anime] Steins Gate Opening.mp4`. Checking items and saving removes those
-entries from `other_feedback.jsonl`. Cancel returns home without changing the
-file. Once an entry is removed here, that file becomes eligible again.
+This version starts fresh. Existing `_mpv_prefs.json` and `other_feedback.jsonl`
+files are ignored and left untouched. They are not imported or updated.
 
-Recommendation is weighted random rather than a strict queue. The home page
-offers four recommendation profiles that control how weights are calculated:
+SQLite changes are transactional. A damaged database is reported rather than
+silently replaced with an empty one. Automatic snapshot backups are checked at
+startup and hourly while running, with at most one automatic backup per UTC day.
+The latest seven helper-generated backups are kept, including backups made
+before reset/cleanup. Snapshots use SQLite's backup API, not a live file copy.
 
-- **Balanced** — A genuinely even-handed default. Unseen files get a moderate
-  boost, liked files compete on roughly equal footing, and dislikes carry a
-  meaningful penalty.
-- **Surprise Me** — Maximize discovery. Never-played files receive a large
-  boost, like bonuses are dampened, and the recency tie-breaker is stronger so
-  recently-played files are pushed further down.
-- **Comfort Zone** — Stick to favorites. No unseen bonus, amplified like bonus,
-  stronger dislike penalty, and play count itself becomes a positive signal (more
-  plays = higher weight).
-- **Pending Review** — Clear the backlog. Files with pending feedback get a
-  massive boost, everything else is deprioritized. Use this when you want to
-  revisit items you flagged as "come back later."
+To restore, stop the helper first. Preserve the current metadata folder under
+a different name, create a fresh `.pocket-media-manager` folder, and copy the
+chosen backup into it as `pocket-media.sqlite3`. Restart the helper; it recreates
+logs/backups and refreshes the catalog. Keeping the preserved folder also keeps
+the original database and any WAL companion files together for recovery.
 
-These weights stay in place until you change the preference data or reset
-preferences; there is no fixed "played in the last 7 days" cooldown. When
-otherwise equal-weight files are in the same recommendation pool, `last_played`
-is used only as a tie-breaker so less recently played files are a little more
-likely than recently played ones.
+Logs are in `logs/helper.log` (rotated at 1 MB with two old files) and, when
+using the PowerShell launcher, `logs/server.log` (current server transcript,
+overwritten on restart).
 
-The home page also has `Reset Preferences`. It opens a confirmation page before
-clearing `MEDIA_ROOT\_mpv_prefs.json` back to an empty preference database.
-Use `Clean Up` when you only want to remove selected orphan records while
-keeping the rest of your recommendation history.
+## API and Shortcuts
 
-## Optional Phone Shortcuts
+The API has changed with this fresh start. Keep the same HTTP cookie jar for
+recommendation and feedback requests; all feedback requires `encounter_id`.
+Old like/dislike/pending/skip shortcuts need updating.
 
-You can still use Shortcuts if you want. Create a shortcut named
-`Next Recommended Video`:
+- `GET /health`: readiness check.
+- `GET /next?player=vlc` or `?player=mpv`: choose a recommendation, create an
+  encounter, and request playback. Player is optional and otherwise remembered.
+  Returns `encounter_id`, `player`, `file_name`, `player_url`/`stream_url` for
+  VLC or `launched` for mpv, feedback URLs, and the persistent feedback page.
+  A failed request includes `launch_error`; its encounter remains resumable.
+- `POST /feedback/{response}` with `encounter_id`: `enjoyed`, `too_soon`,
+  `not_in_mood`, `less_often`, `not_for_me`, or `no_feedback`.
+- `POST /feedback/favorite` with `encounter_id` and `favorite=true/false`.
+- `POST /feedback/other/save` with `encounter_id` and `feedback_type`:
+  `remake`, `fix`, `trim`, or `hold`.
+- `GET /feedback/{encounter_id}`: resume browser feedback without relaunching.
+- `GET /last`: this browser's last encounter and current media preferences.
+- `POST /library/refresh`: refresh the catalog; JSON clients receive media count.
+- `POST /session/new`: begin a fresh session.
+- `GET /stream/{token}`: serve a temporary playback link. The latest 30 links
+  are retained in memory and expire on helper restart; resumed feedback can
+  request a new link through Open Player.
 
-1. Get contents of URL:
+## Validation and Limits
 
-```text
-http://<PC_LAN_IP>:8787/next
-```
+Validation remains ad-hoc, without a maintained test suite. After changes,
+exercise Recommend, selected folders, Explore, both players, and Stream. Check
+that Favorite survives No feedback, each response is attached to its encounter,
+unresolved tasks hide clips until addressed, and two browsers have separate
+unfinished feedback. Restart with an open encounter and resume it. Verify
+Refresh Library discovers additions and marks deletions, and that metadata
+and Stream files never enter recommendations.
 
-2. Get `player_url` from the JSON response (VLC) or check `launched` (mpv).
-3. Open the URL (VLC) or confirm mpv launched (mpv).
-
-Pass `?player=vlc` (default) or `?player=mpv` to choose the player. Pass
-`?profile=balanced` (default), `?profile=surprise`, `?profile=comfort`, or
-`?profile=pending` to choose the recommendation profile:
-
-```text
-http://<PC_LAN_IP>:8787/next?player=vlc
-http://<PC_LAN_IP>:8787/next?player=mpv
-http://<PC_LAN_IP>:8787/next?player=vlc&profile=surprise
-```
-
-Create feedback shortcuts:
-
-```text
-POST http://<PC_LAN_IP>:8787/feedback/like
-POST http://<PC_LAN_IP>:8787/feedback/dislike
-POST http://<PC_LAN_IP>:8787/feedback/pending
-POST http://<PC_LAN_IP>:8787/feedback/skip
-POST http://<PC_LAN_IP>:8787/feedback/other
-POST http://<PC_LAN_IP>:8787/feedback/other/cancel
-POST http://<PC_LAN_IP>:8787/feedback/other/save
-```
-
-Feedback applies to the last recommendation made by the running helper process.
-If the helper restarts before feedback is sent, `/feedback/...` will not know
-which item was last recommended.
-
-## API
-
-- `GET /health`
-  Returns `{"ok": true}`.
-- `GET /`
-  Returns the minimal browser control page.
-- `POST /recommend`
-  Browser action that selects a recommendation using the active profile, opens
-  the chosen player (VLC deep link or mpv subprocess), and shows feedback
-  buttons. Accepts `player` and `profile` form fields.
-- `GET /explore`
-  Shows a manual browser rooted at `MEDIA_ROOT`.
-- `GET /explore?path=...`
-  Shows a subfolder under `MEDIA_ROOT`.
-- `POST /explore/play`
-  Plays a selected supported media file from Explore, records play metadata, and
-  shows feedback buttons.
-- `GET /stream`
-  Shows the direct-play Stream browser rooted at `MEDIA_ROOT\STREAM_FOLDER`.
-- `GET /stream?path=...`
-  Shows a subfolder under the Stream folder.
-- `POST /stream/play`
-  Creates a temporary playback token for a selected Stream file and opens the
-  chosen player without recording recommendation metadata or showing feedback.
-- `GET /cleanup`
-  Shows orphan records from `_mpv_prefs.json` whose paths are no longer present
-  under `MEDIA_ROOT`.
-- `POST /cleanup`
-  Removes selected orphan records from `_mpv_prefs.json` and returns to the
-  home page. Existing media records are kept.
-- `GET /next`
-  Picks and records a recommendation, then returns `stream_url`, `player`,
-  `player_url` (VLC) or `launched` (mpv), and feedback URLs. Accepts optional
-  `player` (`vlc` or `mpv`, default `vlc`) and `profile` (`balanced`,
-  `surprise`, `comfort`, or `pending`, default `balanced`) query params.
-- `GET /stream/{token}`
-  Streams a token-mapped file. The helper keeps the latest 30 playback tokens
-  in memory; older links naturally expire and return 404, the same as unknown
-  tokens, missing files, and paths outside `MEDIA_ROOT`.
-- `POST /feedback/like`
-  Adds one like to the last recommended file.
-- `POST /feedback/dislike`
-  Adds one dislike to the last recommended file.
-- `POST /feedback/pending`
-  Adds one pending/save-for-later mark to the last recommended file.
-- `POST /feedback/skip`
-  Clears the feedback step without changing preference counts.
-- `POST /feedback/other`
-  Starts the required Something Else change-type step. Returns a conflict if
-  the current file already has an unresolved Something Else entry.
-- `GET /feedback/other`
-  Shows the `Describe Change Required` page, unless the current file already
-  has an unresolved Something Else entry.
-- `POST /feedback/other/cancel`
-  Leaves the Something Else step and returns to the normal feedback page.
-- `POST /feedback/other/save`
-  Saves a required `feedback_type` form field to
-  `MEDIA_ROOT\other_feedback.jsonl` and clears the feedback step without
-  changing preference counts. Valid values are `remake`, `fix`, `trim`, and
-  `hold`. Duplicate unresolved Something Else feedback for the same file is
-  rejected.
-- `GET /feedback/addressed`
-  Shows saved Something Else records grouped by change type.
-- `POST /feedback/addressed`
-  Removes the checked Something Else records and returns to the home page.
-- `GET /reset`
-  Shows a confirmation page for resetting preferences.
-- `POST /reset`
-  Clears `_mpv_prefs.json` and resets in-memory recommendation state.
-- `GET /last`
-  Returns the last recommended file and its preference metadata.
-
-## Recommendation Data
-
-Preferences are stored in `MEDIA_ROOT\_mpv_prefs.json`. The JSON shape matches
-the original PC script:
-
-```json
-{
-  "files": {
-    "E:\\Hobby Disk\\Example\\video.mp4": {
-      "likes": 0,
-      "dislikes": 0,
-      "pending": 0,
-      "play_count": 0,
-      "last_played": null,
-      "last_feedback": null
-    }
-  }
-}
-```
-
-If the preference file is missing, the helper creates it. If it is corrupted,
-the helper recovers with an empty in-memory preference set and writes a clean
-file the next time preferences are saved. Preference updates are protected by a
-process-level lock and written through a temporary file that atomically replaces
-the old file, so a failed write should leave the previous complete JSON file in
-place.
-
-Files under `MEDIA_ROOT\STREAM_FOLDER` are intentionally outside the preference
-system. They are not scanned for recommendations, not shown in Explore, and
-not added to `_mpv_prefs.json` when played from Stream.
-
-When media files are deleted or moved, their old preference records can remain
-in `_mpv_prefs.json`. `Clean Up` lists those orphan records and removes only
-the checked entries. It does not delete media files and it does not reset
-preference records for files that still exist.
-
-Something Else feedback is stored separately in `other_feedback.jsonl` under
-`MEDIA_ROOT`. Each line has `path`, `type`, and `created_at`. It does not affect
-like/dislike/pending counts, but unresolved entries remove those files from
-recommendations and Explore. The helper appends new records when Something Else
-feedback is saved and rewrites the file when addressed records are removed.
-Those JSONL updates use the same lock plus atomic replace pattern as
-preferences.
-
-## Safety Notes
-
-This server is for your private home network only. Do not expose it to the
-public internet.
-
-The helper does not accept arbitrary file paths from the phone. It only streams
-files selected by the recommendation engine, behind opaque stream tokens, and
-it verifies streamed files are under `MEDIA_ROOT`.
-
-Playback tokens are temporary and in-memory. Only the latest 30 generated links
-are kept, which prevents quick recommendation cycling from leaving an unlimited
-pile of old stream URLs active.
-
-## Validation
-
-This personal helper no longer carries an automated test suite. For changes,
-run the development server and try the affected workflow from your phone or
-from the local browser. The key manual checks are that the home page opens,
-recommendations launch the chosen player, feedback returns to the expected
-page, and maintenance screens such as Address Other Feedback and Clean Up show
-the expected data.
+Actual VLC playback and Windows mpv launching need a device/PC check. The helper
+does not transcode files; codec support belongs to the player. `.ts` is in the
+default extension list, but an existing `SUPPORTED_EXTENSIONS` override needs
+`.ts` added explicitly. There is no automatic clip matching, legacy migration,
+profile selector, watch-completion tracking, or continuously refreshed catalog.

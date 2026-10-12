@@ -5,3 +5,4 @@ __pycache__/
 pc-helper/.env
 pc-helper/_mpv_prefs.json
 pc-helper/.tmp/
+.pocket-media-manager/

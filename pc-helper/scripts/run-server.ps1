@@ -3,8 +3,6 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
 $EnvFile = Join-Path $Root ".env"
-$LogDir = Join-Path $Root ".tmp"
-$LogFile = Join-Path $LogDir "server.log"
 
 function Get-DotEnvValue {
     param(
@@ -49,6 +47,20 @@ if (-not (Test-Path $Python)) {
 
 $HostName = Get-DotEnvValue -Name "SERVER_HOST" -DefaultValue "0.0.0.0"
 $Port = Get-DotEnvValue -Name "SERVER_PORT" -DefaultValue "8787"
+
+$MediaRootValue = if ($env:MEDIA_ROOT) { $env:MEDIA_ROOT } else {
+    Get-DotEnvValue -Name "MEDIA_ROOT" -DefaultValue "E:\Hobby Disk"
+}
+if (-not [System.IO.Path]::IsPathRooted($MediaRootValue)) {
+    $MediaRootValue = Join-Path $Root $MediaRootValue
+}
+$MediaRootDirectory = [System.IO.Path]::GetFullPath($MediaRootValue)
+if (-not (Test-Path -LiteralPath $MediaRootDirectory -PathType Container)) {
+    throw "MEDIA_ROOT is not an available directory: $MediaRootDirectory"
+}
+$MetadataDirectory = Join-Path $MediaRootDirectory ".pocket-media-manager"
+$LogDir = Join-Path $MetadataDirectory "logs"
+$LogFile = Join-Path $LogDir "server.log"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 

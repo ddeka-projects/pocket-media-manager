@@ -1,110 +1,101 @@
 # Pocket Media Manager
 
-Pocket Media Manager is a personal Windows PC to phone media recommender.
+Pocket Media Manager helps you revisit moments in your local media collection.
+A small Windows PC helper chooses a clip, opens VLC on your phone or mpv on your
+PC, and lets you express how that recommendation felt.
 
-The current helper is intentionally small: it keeps your custom weighted
-recommendation logic on the PC, serves the selected local media file over your
-home Wi-Fi, and gives your phone a tiny browser page for launching and recording
-feedback.
-
-The project does not replace Plex as a full media library. It exists because
-Plex can play files well, but it does not know your custom recommendation
-preferences such as unseen boosts, soft dislike penalties, pending items, and
-Something Else blocks.
-
-## What Is In This Repo
-
-- `pc-helper/`
-  FastAPI helper that scans a Windows media folder, picks a recommendation,
-  streams the selected file, and records like/dislike/pending feedback.
+There is one recommendation engine. **Favorite** is your lasting seal of
+approval, separate from **Enjoyed it**, **Too soon**, **Not in the mood**,
+**Less often**, and **Not for me**. **No feedback** covers testing or simply
+moving on. **Something Else** keeps the Remake/Fix/Trim/Hold workflow for files
+that need attention.
 
 ## Quick Start
 
-Open Git Bash in `pc-helper/` and run:
+From Git Bash in `pc-helper/`:
 
 ```bash
 ./scripts/bootstrap.sh
 ```
 
-Then edit `pc-helper\.env` so `PUBLIC_BASE_URL` uses this PC's LAN IP address:
+Edit `pc-helper/.env`:
 
 ```text
+MEDIA_ROOT=E:\Hobby Disk
 PUBLIC_BASE_URL=http://192.168.1.50:8787
+MPV_PATH=mpv
 ```
 
-The player is chosen from the home page UI (VLC for phone, mpv for PC), not
-from `.env`.
+Use the PC's LAN address so your phone can reach it. `MEDIA_ROOT` must already
+exist. The helper initializes its SQLite database, backups, and logs inside
+`MEDIA_ROOT\.pocket-media-manager`. Your videos remain in their existing folders.
+No database server or cloud account is needed.
 
-For everyday phone use, install the Windows startup task once from an elevated
-PowerShell opened in `pc-helper`:
+For development:
+
+```bash
+./scripts/run-dev.sh
+```
+
+For everyday Windows use, run once from an elevated PowerShell in `pc-helper/`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1
 ```
 
-After that, the helper starts automatically when you sign in. It runs under your
-user account so programs it launches (such as mpv) appear on your desktop.
+The helper starts when you sign in, under your account, so mpv opens on your
+desktop. Open `http://localhost:8787/` on the PC, or
+`http://<PC_LAN_IP>:8787/` on your phone on the same network.
 
-When you edit `pc-helper\.env`, restart the scheduled task from an elevated
-PowerShell so the running helper loads the new settings:
+After editing `.env`, restart the scheduled task:
 
 ```powershell
 Stop-ScheduledTask -TaskName "Pocket Media Manager PC Helper"
 Start-ScheduledTask -TaskName "Pocket Media Manager PC Helper"
 ```
 
-For active development, stop that always-on task and then run the development
-server:
+## Everyday Use
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\remove-startup-task.ps1
-```
+- **Recommend** chooses from the eligible library.
+- **Recommend with Selections** restricts that same engine to selected top-level
+  folders and their descendants. Your selections remain checked after feedback.
+- **Explore** browses the catalog and lets you pick a clip directly. Feedback
+  returns you to its folder. Clip Preferences lets you change Favorite, restore
+  normal frequency, or undo Not for me. Test Playback excludes that encounter
+  from recommendation learning.
+- **Stream** browses the separate `_stream` folder. It records no encounters or
+  preference feedback and leaves you on the listing for the next episode.
+- **Address Other Feedback** resolves outstanding Remake/Fix/Trim/Hold tasks,
+  making those files eligible again.
+- **Refresh Library** discovers new files and checks for moves, edits, and
+  deletions. A full scan also runs at startup; everyday navigation and
+  recommendations use the stored catalog.
+- **Start New Session** starts a fresh sitting, including clearing the
+  session-only effect of Not in the mood. Too soon still applies for 24 hours.
+- **Clean Up** removes selected unavailable database records and their history,
+  never media files. Records with outstanding maintenance tasks are protected.
+- **Reset Preferences** confirms before clearing Favorites, lasting preferences,
+  and encounters. It retains the catalog and Something Else tasks and saves a
+  database backup first.
 
-```bash
-./scripts/run-dev.sh
-```
+Each browser remembers its player and selections and has its own 30-minute
+session. Favorites and lasting clip preferences are shared. Feedback belongs
+to an explicit encounter, so another browser or recommendation cannot steal it.
+Unfinished feedback survives restarts and can be resumed or closed without a
+rating. Opening a player is not counted as a completed viewing.
 
-You can also run the normal no-reload server manually:
+## Fresh Start and Current Limits
 
-```bash
-powershell -ExecutionPolicy Bypass -File .\scripts\run-server.ps1
-```
+This version starts fresh: `_mpv_prefs.json` and `other_feedback.jsonl` are
+ignored and left untouched. There is no legacy import or recommendation profile
+selector. Renamed or adjusted media can become new records without inherited
+preferences.
 
-Test locally:
+The helper does not measure video completion or watch duration. VLC/mpv handle
+playback; the PC must be awake and reachable for phone streaming. Library changes
+appear after startup or Refresh Library. `.ts` is now included in the default
+extension list; existing `.env` extension overrides still need it added.
 
-```text
-http://localhost:8787/
-http://localhost:8787/health
-```
-
-Test from your phone on the same Wi-Fi:
-
-```text
-http://<PC_LAN_IP>:8787/
-```
-
-For this personal app, validation is intentionally ad-hoc: run the helper and
-try the workflow from your phone instead of maintaining an automated test
-suite.
-
-Choose **VLC (Phone)** or **mpv (PC)** from the player toggle on the home page.
-Below it, choose a recommendation profile: **Balanced** (default), **Surprise
-Me**, **Comfort Zone**, or **Pending Review**. Then tap `Recommend` to open the
-chosen player. Use `Recommend with Selections` when you want to choose one or
-more top-level folders under the configured media root for a single
-recommendation. Use `Stream` when you want to browse the configured
-`STREAM_FOLDER` under the media root and play files directly without
-recommendation scoring or feedback. Use `Explore` when you want to browse
-folders and pick a supported media file directly. Use `Clean Up` to remove
-selected orphan preference records for media files that no longer exist under
-the media root. The selection page shows the media root at the top. When you
-switch back to the browser after a selected recommendation, feedback returns
-you to the selection page with the same eligible folders checked. Use `Cancel`
-on that page to clear the selection and return home. After choosing a file
-through `Explore`, submitting feedback returns you to the Explore folder that
-contained the file. Use `Something Else` when the file needs Remake, Fix, Trim,
-or Hold handling without changing its like/dislike/pending score. Files with
-unresolved Something Else feedback are hidden from recommendations and Explore
-until they are cleared through `Address Other Feedback`.
-
-See `pc-helper/README.md` for the full setup and phone workflow.
+For this personal app, validation remains ad-hoc rather than a maintained test
+suite. See [the helper README](pc-helper/README.md) for storage details, backup
+and restore, API changes, and the checks to run after changes.

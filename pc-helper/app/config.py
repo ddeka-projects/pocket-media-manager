@@ -7,8 +7,9 @@ from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MEDIA_ROOT = Path(r"E:\Hobby Disk")
-DEFAULT_SUPPORTED_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
+DEFAULT_SUPPORTED_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".ts"}
 DEFAULT_STREAM_FOLDER = "_stream"
+METADATA_FOLDER = ".pocket-media-manager"
 
 
 def _load_dotenv() -> None:
@@ -51,7 +52,6 @@ def _stream_folder_from_env() -> str:
 @dataclass(frozen=True, slots=True)
 class Settings:
     media_root: Path
-    prefs_file: Path
     supported_extensions: set[str]
     server_host: str
     server_port: int
@@ -59,20 +59,33 @@ class Settings:
     stream_folder: str
     mpv_path: str
 
+    @property
+    def metadata_root(self) -> Path:
+        return self.media_root / METADATA_FOLDER
+
+    @property
+    def database_file(self) -> Path:
+        return self.metadata_root / "pocket-media.sqlite3"
+
 
 def get_settings() -> Settings:
     _load_dotenv()
     server_port = int(os.getenv("SERVER_PORT", "8787"))
     public_base_url = os.getenv("PUBLIC_BASE_URL", f"http://127.0.0.1:{server_port}").rstrip("/")
     mpv_path = os.getenv("MPV_PATH", "mpv").strip()
-    media_root = _path_from_env("MEDIA_ROOT", DEFAULT_MEDIA_ROOT)
+    media_root = _path_from_env("MEDIA_ROOT", DEFAULT_MEDIA_ROOT).resolve()
+    stream_folder = _stream_folder_from_env()
+    stream_root = (media_root / stream_folder).resolve()
+    if not stream_root.is_relative_to(media_root) or stream_root == media_root:
+        raise ValueError("STREAM_FOLDER must name a folder inside MEDIA_ROOT")
+    if stream_root.is_relative_to(media_root / METADATA_FOLDER):
+        raise ValueError("STREAM_FOLDER cannot be the metadata folder")
     return Settings(
         media_root=media_root,
-        prefs_file=media_root / "_mpv_prefs.json",
         supported_extensions=_parse_extensions(os.getenv("SUPPORTED_EXTENSIONS")),
         server_host=os.getenv("SERVER_HOST", "0.0.0.0"),
         server_port=server_port,
         public_base_url=public_base_url,
-        stream_folder=_stream_folder_from_env(),
+        stream_folder=stream_folder,
         mpv_path=mpv_path or "mpv",
     )
