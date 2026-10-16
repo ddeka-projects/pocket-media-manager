@@ -32,6 +32,12 @@ class Conflict(ValueError):
     pass
 
 
+class FeedbackRequired(Conflict):
+    def __init__(self, encounter_id: str):
+        super().__init__("Close the current clip's feedback before continuing. No feedback is fine.")
+        self.encounter_id = encounter_id
+
+
 class Database:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -86,6 +92,8 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS encounter_media ON encounters(media_id,selected_at);
                 CREATE INDEX IF NOT EXISTS encounter_browser ON encounters(browser_id,selected_at);
+                CREATE INDEX IF NOT EXISTS encounter_open ON encounters(selected_at,id)
+                    WHERE resolution='open';
                 CREATE TABLE IF NOT EXISTS other_feedback (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
@@ -146,6 +154,7 @@ class Database:
 
     def update_browser(self, browser_id: str, **changes: Any) -> dict[str, Any]:
         with self.connect(write=True) as conn:
+            self.require_idle(conn)
             value = self._setting(conn, "browser:" + browser_id)
             value.update(changes)
             self._save_setting(conn, "browser:" + browser_id, value)
@@ -155,6 +164,7 @@ class Database:
                       now: datetime | None = None) -> str:
         now = now or datetime.now(timezone.utc)
         with self.connect(write=True) as conn:
+            self.require_idle(conn)
             value = self._setting(conn, "browser:" + browser_id)
             last = value["last_activity_at"]
             if (force or not value["session_id"] or not last
@@ -174,7 +184,7 @@ class Database:
             value["last_activity_at"] = now.isoformat(timespec="microseconds")
             self._save_setting(conn, key, value)
 
-    def refresh_catalog(self) -> int:
+    def refresh_catalog(self, *, allow_pending: bool = False) -> int:
         with self.scan_lock:
             root = self.settings.media_root
             if not root.is_dir():
@@ -201,6 +211,8 @@ class Database:
                         found[path.relative_to(root).as_posix()] = (stat.st_size, stat.st_mtime_ns)
             timestamp = now_iso()
             with self.connect(write=True) as conn:
+                if not allow_pending:
+                    self.require_idle(conn)
                 previous = {row["relative_path"]: row for row in
                             conn.execute("SELECT * FROM media ORDER BY id")}
                 conn.execute("UPDATE media SET available=0 WHERE available=1")
@@ -286,50 +298,94 @@ class Database:
             raise ValueError("Unknown encounter source")
         encounter_id = uuid.uuid4().hex
         with self.connect(write=True) as conn:
+            self.require_idle(conn)
             conn.execute("""INSERT INTO encounters
                 (id,media_id,browser_id,session_id,selected_at,source,context)
                 VALUES (?,?,?,?,?,?,?)""",
                 (encounter_id, media_id, browser_id, session_id, now_iso(), source, json.dumps(context)))
-        return self.encounter(encounter_id, browser_id)
+        return self.encounter(encounter_id)
 
-    def encounter(self, encounter_id: str, browser_id: str) -> dict[str, Any]:
+    @staticmethod
+    def _pending_id(conn: sqlite3.Connection) -> str | None:
+        row = conn.execute("""SELECT id FROM encounters WHERE resolution='open'
+            ORDER BY selected_at DESC,id DESC LIMIT 1""").fetchone()
+        return row[0] if row else None
+
+    def require_idle(self, conn: sqlite3.Connection) -> None:
+        pending = self._pending_id(conn)
+        if pending:
+            raise FeedbackRequired(pending)
+
+    @contextmanager
+    def idle(self) -> Iterator[sqlite3.Connection]:
+        # Keep the check and the operation together, including new direct-stream launches.
+        with self.connect(write=True) as conn:
+            self.require_idle(conn)
+            yield conn
+
+    def pending_encounter(self) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute("""SELECT e.*,m.relative_path,m.favorite FROM encounters e
-                JOIN media m ON m.id=e.media_id WHERE e.id=? AND e.browser_id=?""",
-                (encounter_id, browser_id)).fetchone()
-            if not row:
-                raise KeyError("Encounter not found in this browser")
-            result = dict(row)
-            result["context"] = json.loads(result["context"])
-            return result
+                JOIN media m ON m.id=e.media_id WHERE e.resolution='open'
+                ORDER BY e.selected_at DESC,e.id DESC LIMIT 1""").fetchone()
+            return self._encounter_dict(row) if row else None
 
-    def latest_encounter(self, browser_id: str, only_open: bool = False) -> dict[str, Any] | None:
+    @staticmethod
+    def _encounter_dict(row: sqlite3.Row) -> dict[str, Any]:
+        result = dict(row)
+        result["context"] = json.loads(result["context"])
+        return result
+
+    def encounter(self, encounter_id: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute("""SELECT e.*,m.relative_path,m.favorite FROM encounters e
+                JOIN media m ON m.id=e.media_id WHERE e.id=?""", (encounter_id,)).fetchone()
+            if not row:
+                raise KeyError("Encounter not found")
+            return self._encounter_dict(row)
+
+    def latest_encounter(self, browser_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute("SELECT id FROM encounters WHERE browser_id=?"
-                               + (" AND resolution='open'" if only_open else "")
-                               + " ORDER BY selected_at DESC LIMIT 1", (browser_id,)).fetchone()
-        return self.encounter(row[0], browser_id) if row else None
+                               " ORDER BY selected_at DESC,id DESC LIMIT 1", (browser_id,)).fetchone()
+        return self.encounter(row[0]) if row else None
 
-    def mark_launch(self, encounter_id: str, browser_id: str, error: str | None = None) -> None:
+    def _require_open(self, conn: sqlite3.Connection, encounter_id: str) -> None:
+        row = conn.execute("SELECT resolution FROM encounters WHERE id=?", (encounter_id,)).fetchone()
+        if not row:
+            raise KeyError("Encounter not found")
+        if row[0] != "open":
+            raise Conflict("This encounter is already closed; open the clip again through Explore")
+        pending = self._pending_id(conn)
+        if pending and pending != encounter_id:
+            raise FeedbackRequired(pending)
+
+    @contextmanager
+    def playback(self, encounter_id: str) -> Iterator[sqlite3.Connection]:
+        # Closing feedback must wait until its player launch has finished, and vice versa.
         with self.connect(write=True) as conn:
-            conn.execute("""UPDATE encounters SET playback_requested_at=?,launch_status=?,launch_error=?
-                WHERE id=? AND browser_id=?""",
-                (now_iso(), "failed" if error else "requested", error, encounter_id, browser_id))
+            self._require_open(conn, encounter_id)
+            yield conn
 
-    def submit_feedback(self, encounter_id: str, browser_id: str, feedback: str) -> dict[str, Any]:
+    @staticmethod
+    def mark_launch(conn: sqlite3.Connection, encounter_id: str, error: str | None = None) -> None:
+        conn.execute("""UPDATE encounters SET playback_requested_at=?,launch_status=?,launch_error=?
+            WHERE id=?""", (now_iso(), "failed" if error else "requested", error, encounter_id))
+
+    def submit_feedback(self, encounter_id: str, feedback: str) -> dict[str, Any]:
         if feedback not in FEEDBACK and feedback != "no_feedback":
             raise ValueError("Unknown feedback")
         resolution = "no_feedback" if feedback == "no_feedback" else "answered"
         response = None if feedback == "no_feedback" else feedback
         with self.connect(write=True) as conn:
-            row = conn.execute("SELECT * FROM encounters WHERE id=? AND browser_id=?",
-                               (encounter_id, browser_id)).fetchone()
+            row = conn.execute("SELECT * FROM encounters WHERE id=?", (encounter_id,)).fetchone()
             if not row:
-                raise KeyError("Encounter not found in this browser")
+                raise KeyError("Encounter not found")
             if row["resolution"] != "open":
                 if row["resolution"] != resolution or row["feedback"] != response:
                     raise Conflict("This encounter already has a different response")
             else:
+                self._require_open(conn, encounter_id)
                 conn.execute("UPDATE encounters SET feedback=?,resolution=?,closed_at=? WHERE id=?",
                              (response, resolution, now_iso(), encounter_id))
                 if feedback == "not_for_me":
@@ -337,19 +393,14 @@ class Database:
                 elif feedback == "less_often":
                     conn.execute("UPDATE media SET less_often=1 WHERE id=?", (row["media_id"],))
                 self._touch_encounter_session(conn, row)
-        return self.encounter(encounter_id, browser_id)
+        return self.encounter(encounter_id)
 
-    def preference_for_encounter(self, encounter_id: str, browser_id: str,
-                                 preference: str, enabled: bool) -> None:
+    def preference_for_encounter(self, encounter_id: str, preference: str, enabled: bool) -> None:
         if preference not in {"favorite", "less_often", "not_for_me"}:
             raise ValueError("Unknown preference")
         with self.connect(write=True) as conn:
-            row = conn.execute("SELECT * FROM encounters WHERE id=? AND browser_id=?",
-                               (encounter_id, browser_id)).fetchone()
-            if not row:
-                raise KeyError("Encounter not found in this browser")
-            if row["resolution"] != "open":
-                raise Conflict("This encounter is already closed; open the clip through Explore to change its preferences")
+            self._require_open(conn, encounter_id)
+            row = conn.execute("SELECT * FROM encounters WHERE id=?", (encounter_id,)).fetchone()
             if preference == "favorite" and enabled:
                 media = conn.execute("SELECT not_for_me FROM media WHERE id=?", (row["media_id"],)).fetchone()
                 if media["not_for_me"]:
@@ -360,20 +411,20 @@ class Database:
                 conn.execute(f"UPDATE media SET {preference}=? WHERE id=?", (int(enabled), row["media_id"]))
             self._touch_encounter_session(conn, row)
 
-    def submit_other(self, encounter_id: str, browser_id: str, feedback_type: str) -> dict[str, Any]:
+    def submit_other(self, encounter_id: str, feedback_type: str) -> dict[str, Any]:
         if feedback_type not in OTHER_FEEDBACK:
             raise ValueError("Unknown maintenance type")
         with self.connect(write=True) as conn:
-            row = conn.execute("SELECT * FROM encounters WHERE id=? AND browser_id=?",
-                               (encounter_id, browser_id)).fetchone()
+            row = conn.execute("SELECT * FROM encounters WHERE id=?", (encounter_id,)).fetchone()
             if not row:
-                raise KeyError("Encounter not found in this browser")
+                raise KeyError("Encounter not found")
             if row["resolution"] == "other_feedback":
                 if json.loads(row["context"]).get("other_feedback_type") != feedback_type:
                     raise Conflict("This encounter already has a different maintenance response")
             elif row["resolution"] != "open":
                 raise Conflict("This encounter is already closed")
             else:
+                self._require_open(conn, encounter_id)
                 if conn.execute("SELECT 1 FROM other_feedback WHERE media_id=? AND resolved_at IS NULL",
                                 (row["media_id"],)).fetchone():
                     raise Conflict("This clip already has outstanding Something Else feedback")
@@ -385,7 +436,7 @@ class Database:
                 conn.execute("UPDATE encounters SET resolution='other_feedback',closed_at=?,context=? WHERE id=?",
                              (timestamp, json.dumps(context), encounter_id))
                 self._touch_encounter_session(conn, row)
-        return self.encounter(encounter_id, browser_id)
+        return self.encounter(encounter_id)
 
     def tasks(self) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -395,12 +446,14 @@ class Database:
 
     def resolve_tasks(self, task_ids: list[int]) -> None:
         with self.connect(write=True) as conn:
+            self.require_idle(conn)
             conn.executemany("UPDATE other_feedback SET resolved_at=? WHERE id=? AND resolved_at IS NULL",
                              [(now_iso(), task_id) for task_id in task_ids])
 
     def cleanup(self, media_ids: list[int]) -> None:
         self.backup()
         with self.connect(write=True) as conn:
+            self.require_idle(conn)
             conn.executemany("""DELETE FROM media WHERE id=? AND available=0
                 AND NOT EXISTS (SELECT 1 FROM other_feedback
                     WHERE media_id=media.id AND resolved_at IS NULL)""", [(item,) for item in media_ids])
@@ -408,6 +461,7 @@ class Database:
     def reset_preferences(self) -> None:
         self.backup()
         with self.connect(write=True) as conn:
+            self.require_idle(conn)
             conn.execute("DELETE FROM encounters")
             conn.execute("UPDATE media SET favorite=0,less_often=0,not_for_me=0")
             rows = list(conn.execute("SELECT key,value FROM settings WHERE key LIKE 'browser:%'"))

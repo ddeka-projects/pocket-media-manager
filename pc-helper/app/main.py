@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import recommender, state
 from .config import Settings, get_settings
-from .storage import Conflict, Database, FEEDBACK, OTHER_FEEDBACK
+from .storage import Conflict, Database, FeedbackRequired, FEEDBACK, OTHER_FEEDBACK
 
 
 logger = logging.getLogger("pocket_media_manager")
@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
     app.state.database = database
     backup_task = None
     try:
-        count = await run_in_threadpool(database.refresh_catalog)
+        count = await run_in_threadpool(database.refresh_catalog, allow_pending=True)
         await run_in_threadpool(database.backup, daily=True)
         logger.info("Catalog ready: %s media files", count)
         backup_task = asyncio.create_task(_daily_backups(database))
@@ -81,10 +81,16 @@ async def browser_context(request: Request, call_next):
     request.state.browser_id = browser_id
     try:
         request.state.browser = await run_in_threadpool(_db(request).browser, browser_id)
-        response = await call_next(request)
+        pending = await run_in_threadpool(_db(request).pending_encounter)
+        request.state.pending_encounter = pending
+        if pending and not _feedback_request(request, pending["id"]):
+            response = _pending_response(request, pending["id"])
+        else:
+            response = await call_next(request)
     except (OSError, sqlite3.Error) as error:
         logger.exception("Storage is unavailable")
         response = _error(request, 503, f"Media storage is unavailable: {error}")
+    response.headers["Cache-Control"] = "no-store"
     if new_cookie:
         response.set_cookie(COOKIE_NAME, browser_id, max_age=365 * 24 * 3600,
                             httponly=True, samesite="lax")
@@ -102,6 +108,29 @@ def _settings(request: Request) -> Settings:
 def _html(request: Request) -> bool:
     accept = request.headers.get("accept", "")
     return "text/html" in accept and "application/json" not in accept
+
+
+def _feedback_request(request: Request, encounter_id: str) -> bool:
+    path = request.url.path
+    if request.method == "GET":
+        return (path in {f"/feedback/{encounter_id}", "/last"}
+                or (path == "/feedback/other"
+                    and request.query_params.get("encounter_id") == encounter_id))
+    if request.method == "POST":
+        return (path == f"/encounters/{encounter_id}/play"
+                or path in {"/feedback/" + action for action in
+                            (*FEEDBACK, "no_feedback", "favorite", "restore", "other", "other/save")})
+    return False
+
+
+def _pending_response(request: Request, encounter_id: str):
+    path = "/feedback/" + encounter_id
+    if _html(request):
+        return RedirectResponse(path, 303, headers={"Cache-Control": "no-store"})
+    return JSONResponse({"detail": str(FeedbackRequired(encounter_id)), "code": "feedback_required",
+                         "encounter_id": encounter_id,
+                         "feedback_page": _settings(request).public_base_url + path},
+                        status_code=409, headers={"Cache-Control": "no-store"})
 
 
 def _page(title: str, body: str, status_code: int = 200) -> HTMLResponse:
@@ -168,7 +197,9 @@ button.explore-file.is-not-for-me {{background:#fff0ef;border-color:#d5a19c;
 </style></head><body><main>{body}</main>
 <script>document.querySelectorAll('time[datetime]').forEach(function(el) {{
   el.textContent = new Date(el.dateTime).toLocaleString();
-}});</script></body></html>""", status_code=status_code)
+}});
+window.addEventListener('pageshow',function(event) {{if(event.persisted) window.location.reload();}});
+</script></body></html>""", status_code=status_code, headers={"Cache-Control": "no-store"})
 
 
 def _form(action: str, label: str, fields: dict | None = None, kind: str = "secondary") -> str:
@@ -183,10 +214,18 @@ def _link(url: str, label: str) -> str:
 
 def _error(request: Request, code: int, message: str):
     if _html(request):
+        pending = getattr(request.state, "pending_encounter", None)
+        navigation = (_link("/feedback/" + pending["id"], "Back to Feedback") if pending else
+                      _link("/", "Home") + _link("/explore", "Explore")
+                      + _form("/library/refresh", "Refresh Library"))
         return _page("Unable to continue", f'<h1>Unable to continue</h1><p>{escape(message)}</p>'
-                     + _link("/", "Home") + _link("/explore", "Explore")
-                     + _form("/library/refresh", "Refresh Library"), code)
+                     + navigation, code)
     return JSONResponse({"detail": message}, status_code=code)
+
+
+@app.exception_handler(FeedbackRequired)
+async def unfinished_feedback(request: Request, error: FeedbackRequired):
+    return _pending_response(request, error.encounter_id)
 
 
 @app.exception_handler(KeyError)
@@ -226,25 +265,31 @@ def _launch(request: Request, encounter: dict) -> dict:
     database = _db(request)
     result = {"encounter_id": encounter["id"], "file_name": Path(encounter["relative_path"]).name,
               "player": encounter["context"]["player"], "launched": False}
+    preparation_error = None
     try:
         path = database.verify_media(encounter["media_id"])
         if database.blocked(encounter["media_id"]):
             raise ValueError("This file has outstanding Something Else feedback")
-        if result["player"] == "mpv":
-            _launch_mpv(_settings(request), path)
-            result["launched"] = True
-        else:
-            token = state.create_stream_token(path)
-            result["stream_url"] = f"{_settings(request).public_base_url}/stream/{token}"
-            result["player_url"] = build_vlc_url(result["stream_url"])
-        database.mark_launch(encounter["id"], request.state.browser_id)
     except (OSError, ValueError) as error:
-        message = str(error)
-        if isinstance(error, FileNotFoundError) and result["player"] == "mpv":
-            message = "mpv was not found. Set MPV_PATH in .env to its full executable path."
-        database.mark_launch(encounter["id"], request.state.browser_id, message)
-        result["launch_error"] = message
-        logger.warning("Playback request failed: %s", message)
+        preparation_error = error
+    with database.playback(encounter["id"]) as conn:
+        try:
+            if preparation_error:
+                raise preparation_error
+            if result["player"] == "mpv":
+                _launch_mpv(_settings(request), path)
+                result["launched"] = True
+            else:
+                token = state.create_stream_token(path)
+                result["stream_url"] = f"{_settings(request).public_base_url}/stream/{token}"
+                result["player_url"] = build_vlc_url(result["stream_url"])
+        except (OSError, ValueError) as error:
+            message = str(error)
+            if isinstance(error, FileNotFoundError) and result["player"] == "mpv" and preparation_error is None:
+                message = "mpv was not found. Set MPV_PATH in .env to its full executable path."
+            result["launch_error"] = message
+            logger.warning("Playback request failed: %s", message)
+        database.mark_launch(conn, encounter["id"], result.get("launch_error"))
     return result
 
 
@@ -283,13 +328,16 @@ def _feedback_page(request: Request, encounter: dict, launch: dict | None = None
     media = _db(request).media(encounter["media_id"])
     favorite = media["favorite"]
     body = f'<h1>Feedback</h1><p>{escape(Path(encounter["relative_path"]).name)}</p>'
+    body += '<p>Close this feedback to continue on any device. Choosing No feedback is fine.</p>'
+    body += '<script>history.replaceState(null,"",' + json.dumps("/feedback/" + identifier) + ');</script>'
     error = launch.get("launch_error") if launch else encounter["launch_error"]
     if error:
         body += f'<p class="error">{escape(error)}</p>'
     if launch and launch.get("player_url"):
         url = json.dumps(launch["player_url"]).replace("<", "\\u003c")
         body += f'<script>setTimeout(function() {{window.location.href={url};}},100);</script>'
-    body += _form(f"/encounters/{identifier}/play", "Open Player")
+    player_label = "mpv (PC)" if encounter["context"]["player"] == "mpv" else "VLC (Phone)"
+    body += _form(f"/encounters/{identifier}/play", "Open Player — " + player_label)
     if not media["not_for_me"]:
         body += _form("/feedback/favorite", "★ Favorite — remove" if favorite else "☆ Mark as Favorite",
                       {"encounter_id": identifier, "favorite": "0" if favorite else "1"})
@@ -306,7 +354,7 @@ def _feedback_page(request: Request, encounter: dict, launch: dict | None = None
     body += _form("/feedback/no_feedback", "No feedback", {"encounter_id": identifier})
     if not _db(request).blocked(encounter["media_id"]):
         body += _form("/feedback/other", "Something Else", {"encounter_id": identifier})
-    body += '</div>' + _link("/", "Home")
+    body += '</div>'
     return _page("Feedback", body)
 
 
@@ -335,12 +383,6 @@ def home(request: Request):
     for value, label in (("vlc", "VLC (Phone)"), ("mpv", "mpv (PC)")):
         body += f'<button type="button" class="secondary{" active" if player == value else ""}" data-player="{value}">{label}</button>'
     body += '</div><div class="stack">'
-    pending = _db(request).latest_encounter(request.state.browser_id, only_open=True)
-    if pending:
-        body += '<div class="notice"><p>Unfinished feedback: ' + escape(Path(pending["relative_path"]).name) + '</p>'
-        body += _link("/feedback/" + pending["id"], "Resume Feedback")
-        body += _form("/feedback/no_feedback", "Close without feedback", {"encounter_id": pending["id"]})
-        body += _link("/encounters/open", "All Unfinished Feedback") + '</div>'
     body += _form("/recommend", "Recommend", {"player": player}, "")
     for url, label in (("/select", "Recommend with Selections"), ("/explore", "Explore"), ("/stream", "Stream")):
         body += f'<form method="get" action="{url}"><input type="hidden" name="player" value="{player}"><button class="secondary">{label}</button></form>'
@@ -579,11 +621,12 @@ def stream_play(request: Request, path: str = Form(...)) -> dict:
     target = (_settings(request).media_root / _settings(request).stream_folder / relative).resolve()
     if not target.is_file() or target.suffix.lower() not in _settings(request).supported_extensions:
         raise ValueError("Stream file not found or unsupported")
-    if request.state.browser["player"] == "mpv":
-        _launch_mpv(_settings(request), target)
-        return {"launched": True}
-    token = state.create_stream_token(target)
-    return {"player_url": build_vlc_url(f"{_settings(request).public_base_url}/stream/{token}")}
+    with _db(request).idle():
+        if request.state.browser["player"] == "mpv":
+            _launch_mpv(_settings(request), target)
+            return {"launched": True}
+        token = state.create_stream_token(target)
+        return {"player_url": build_vlc_url(f"{_settings(request).public_base_url}/stream/{token}")}
 
 
 @app.get("/stream/{token}")
@@ -597,26 +640,9 @@ def stream_media(request: Request, token: str) -> FileResponse:
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 
 
-@app.get("/encounters/open", response_class=HTMLResponse)
-def open_encounters(request: Request):
-    with _db(request).connect() as conn:
-        rows = list(conn.execute("""SELECT e.id,e.selected_at,m.relative_path FROM encounters e
-            JOIN media m ON m.id=e.media_id WHERE e.browser_id=? AND e.resolution='open'
-            ORDER BY selected_at DESC""", (request.state.browser_id,)))
-    body = '<h1>Unfinished Feedback</h1>' + _link("/", "Home")
-    for row in rows:
-        body += '<div class="notice"><p>' + escape(row["relative_path"]) + '</p>'
-        body += f'<p><time datetime="{row["selected_at"]}"></time></p>'
-        body += _link("/feedback/" + row["id"], "Resume")
-        body += _form("/feedback/no_feedback", "No feedback", {"encounter_id": row["id"]}) + '</div>'
-    if not rows:
-        body += '<p>No unfinished feedback.</p>'
-    return _page("Unfinished Feedback", body)
-
-
 @app.post("/encounters/{encounter_id}/play", response_class=HTMLResponse)
 def replay_encounter(request: Request, encounter_id: str):
-    encounter = _db(request).encounter(encounter_id, request.state.browser_id)
+    encounter = _db(request).encounter(encounter_id)
     if encounter["resolution"] != "open":
         raise Conflict("This encounter is already closed; choose the clip again through Explore")
     return _feedback_page(request, encounter, _launch(request, encounter))
@@ -624,7 +650,7 @@ def replay_encounter(request: Request, encounter_id: str):
 
 @app.post("/feedback/favorite")
 def favorite_feedback(request: Request, encounter_id: str = Form(...), favorite: bool = Form(...)):
-    _db(request).preference_for_encounter(encounter_id, request.state.browser_id, "favorite", favorite)
+    _db(request).preference_for_encounter(encounter_id, "favorite", favorite)
     return RedirectResponse("/feedback/" + encounter_id, 303) if _html(request) else {"favorite": favorite}
 
 
@@ -632,14 +658,14 @@ def favorite_feedback(request: Request, encounter_id: str = Form(...), favorite:
 def restore_preference(request: Request, encounter_id: str = Form(...), preference: str = Form(...)):
     if preference not in {"less_often", "not_for_me"}:
         raise ValueError("Only frequency or recommendation eligibility can be restored here")
-    _db(request).preference_for_encounter(encounter_id, request.state.browser_id, preference, False)
+    _db(request).preference_for_encounter(encounter_id, preference, False)
     return (RedirectResponse("/feedback/" + encounter_id, 303) if _html(request)
             else {"preference": preference, "enabled": False})
 
 
 @app.post("/feedback/other")
 def begin_other(request: Request, encounter_id: str = Form(...)):
-    encounter = _db(request).encounter(encounter_id, request.state.browser_id)
+    encounter = _db(request).encounter(encounter_id)
     if encounter["resolution"] != "open" or _db(request).blocked(encounter["media_id"]):
         raise Conflict("This encounter is closed or already has Something Else feedback")
     return RedirectResponse("/feedback/other?" + urlencode({"encounter_id": encounter_id}), 303)
@@ -647,7 +673,7 @@ def begin_other(request: Request, encounter_id: str = Form(...)):
 
 @app.get("/feedback/other", response_class=HTMLResponse)
 def other_page(request: Request, encounter_id: str):
-    encounter = _db(request).encounter(encounter_id, request.state.browser_id)
+    encounter = _db(request).encounter(encounter_id)
     if encounter["resolution"] != "open":
         raise Conflict("This encounter is already closed")
     body = '<h1>Describe Change Required</h1><p>' + escape(encounter["relative_path"]) + '</p><div class="stack">'
@@ -666,7 +692,7 @@ def _feedback_response(request: Request, encounter: dict) -> dict | RedirectResp
 
 @app.post("/feedback/other/save")
 def save_other(request: Request, encounter_id: str = Form(...), feedback_type: str = Form(...)):
-    return _feedback_response(request, _db(request).submit_other(encounter_id, request.state.browser_id, feedback_type))
+    return _feedback_response(request, _db(request).submit_other(encounter_id, feedback_type))
 
 
 @app.get("/feedback/addressed", response_class=HTMLResponse)
@@ -695,12 +721,12 @@ def save_addressed(request: Request, task_ids: list[int] = Form(default=[])):
 
 @app.get("/feedback/{encounter_id}", response_class=HTMLResponse)
 def resume_feedback(request: Request, encounter_id: str):
-    return _feedback_page(request, _db(request).encounter(encounter_id, request.state.browser_id))
+    return _feedback_page(request, _db(request).encounter(encounter_id))
 
 
 @app.post("/feedback/{feedback}")
 def submit_feedback(request: Request, feedback: str, encounter_id: str = Form(...)):
-    return _feedback_response(request, _db(request).submit_feedback(encounter_id, request.state.browser_id, feedback))
+    return _feedback_response(request, _db(request).submit_feedback(encounter_id, feedback))
 
 
 @app.get("/cleanup", response_class=HTMLResponse)
@@ -735,7 +761,7 @@ def reset_preferences(request: Request):
 
 @app.get("/last")
 def last(request: Request):
-    encounter = _db(request).latest_encounter(request.state.browser_id)
+    encounter = _db(request).pending_encounter() or _db(request).latest_encounter(request.state.browser_id)
     if not encounter:
         raise KeyError("No encounter has been made in this browser")
     return {"encounter": encounter, "media": _db(request).media(encounter["media_id"])}

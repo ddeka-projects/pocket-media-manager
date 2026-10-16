@@ -83,10 +83,14 @@ Start-ScheduledTask -TaskName "Pocket Media Manager PC Helper"
   database backup first.
 
 Each browser remembers its player and selections and has its own 30-minute
-session. Favorites and lasting clip preferences are shared. Feedback belongs
-to an explicit encounter, so another browser or recommendation cannot steal it.
-Unfinished feedback survives restarts and can be resumed or closed without a
-rating. Opening a player is not counted as a completed viewing.
+session. Favorites and lasting clip preferences are shared. Only one clip can
+await feedback across the entire app. Until it is closed, every device returns
+to that feedback screen instead of Home, Explore, or other workflows. Choose a
+response, No feedback, or save Something Else to continue; Favorite alone does
+not close it. Any device can finish it, even after a restart or clearing cookies.
+Returning does not automatically reopen the player. Home no longer has an
+unfinished-feedback queue, and playback already underway remains uninterrupted.
+Opening a player is not counted as a completed viewing.
 
 ## Fresh Start and Current Limits
 

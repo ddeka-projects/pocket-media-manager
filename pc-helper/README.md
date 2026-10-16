@@ -94,7 +94,9 @@ but adds no enjoyment or negative rating; the usual brief repeat penalty applies
 
 **Stream** browses `MEDIA_ROOT\STREAM_FOLDER` directly. Files there are outside
 the recommendation catalog and encounter history. Opening a file leaves the
-browser on its listing so you can return for the next episode.
+browser on its listing so you can return for the next episode. Like other app
+workflows, starting a new Stream playback is unavailable while a library clip
+awaits feedback. Existing playback links keep serving media bytes.
 
 When the player opens, the browser displays feedback:
 
@@ -154,8 +156,36 @@ VLC link does not prove the video was watched or completed. Watch duration and
 completion are not measured.
 
 Feedback forms carry the encounter ID. Repeating the same response is safe;
-submitting a different response to a closed encounter is rejected. There is no
-global "last recommendation" shared by devices.
+submitting a different response to a closed encounter is rejected. The app
+allows only **one open encounter across all devices and tabs**. Opening Home,
+Explore, Selections, Stream, or a maintenance screen while it is open returns
+you directly to that feedback screen. There is no Resume Feedback banner or
+unfinished-feedback list on Home.
+
+Any device can close the shared encounter with an ordinary response,
+**No feedback**, or a saved **Something Else** task. Favorite and restoration
+controls save without closing it; cancelling Something Else also leaves it
+open. Starting a new session, clearing cookies, or restarting the helper does
+not bypass the requirement. A failed player launch still needs closure; use
+No feedback if you do not want to rate it. Returning to feedback never
+automatically relaunches playback. **Open Player** uses the originally selected
+player, shown on its button, even if you resume from another device.
+
+The check and each state-changing operation use the same SQLite write
+transaction, so simultaneous recommendation requests cannot create two open
+encounters. Closing feedback and launching its player are also serialized.
+The first response wins; identical retries are safe, while conflicting or stale
+changes are rejected. There is no device ownership, lease, heartbeat, automatic
+expiry, or takeover step. Nothing polls in the background: another open tab
+encounters the restriction on its next request. Cached browser history pages
+reload when restored; the backend enforces the rule regardless of the page
+being displayed. Existing media streams, health checks, and static icons remain
+available without taking the feedback gate.
+
+If an older database already contains several open encounters, they are
+presented one at a time, newest first. None are silently discarded; new
+activity stays blocked until all are closed. No extra table or metadata file
+is needed for the gate.
 
 A persistent browser cookie identifies its saved settings. Phone and PC
 browsers have separate sessions, while the library and lasting preferences are
@@ -165,14 +195,14 @@ and Favorite changes during an active encounter extend activity. Page refreshes
 do not. **Start New Session** resets this browser's sitting explicitly.
 
 Late feedback stays with its original encounter and does not revive an expired
-session. Restarting the helper alone does not end an active session. Unfinished
-encounters remain open: Home offers Resume Feedback, Close without feedback,
-and All Unfinished Feedback. You can also keep browsing without answering.
-Resume does not automatically relaunch the player; use Open Player when needed.
+session. Feedback submitted on another device still belongs to the originating
+encounter and session. Restarting the helper alone does not end an active
+session, and session expiry never closes feedback.
 
-Clearing cookies or changing browsers gives you a new browser identity and
-does not expose the previous browser's unfinished feedback. Its records still
-exist in the database. Cookies must be retained for API feedback as well.
+Clearing cookies or changing browsers gives you fresh player/selections/session
+settings, but the pending encounter remains visible and closable everywhere.
+This is a single-user, trusted-LAN application, not a multi-user privacy or
+authorization boundary.
 
 ## Catalog and Maintenance
 
@@ -248,9 +278,17 @@ overwritten on restart).
 
 ## API and Shortcuts
 
-The API has changed with this fresh start. Keep the same HTTP cookie jar for
-recommendation and feedback requests; all feedback requires `encounter_id`.
-Old like/dislike/pending/skip shortcuts need updating.
+The API has changed with this fresh start. Keep a cookie jar to retain this
+browser's player, selections, session, and historical last encounter. Feedback
+is shared across browsers and requires `encounter_id`, not the originating
+cookie. Old like/dislike/pending/skip shortcuts need updating.
+
+While an encounter is open, requests outside its feedback workflow receive
+HTTP **409** for JSON clients, with `code=feedback_required`, `encounter_id`,
+and `feedback_page`. This includes `/next`, new playback, settings, sessions,
+refresh, reset, and cleanup. HTML navigation redirects to the feedback page
+instead. `/last`, feedback controls, and existing media-byte requests remain
+available. State-dependent app responses are not cached.
 
 - `GET /health`: readiness check.
 - `GET /next?player=vlc` or `?player=mpv`: choose a recommendation, create an
@@ -265,8 +303,9 @@ Old like/dislike/pending/skip shortcuts need updating.
   `preference=not_for_me`: clear that lasting preference without closing feedback.
 - `POST /feedback/other/save` with `encounter_id` and `feedback_type`:
   `remake`, `fix`, `trim`, or `hold`.
-- `GET /feedback/{encounter_id}`: resume browser feedback without relaunching.
-- `GET /last`: this browser's last encounter and current media preferences.
+- `GET /feedback/{encounter_id}`: view shared feedback without relaunching.
+- `GET /last`: the shared pending encounter and current media preferences, or
+  this browser's last encounter when no feedback is pending.
 - `POST /library/refresh`: refresh the catalog; JSON clients receive media count.
 - `POST /session/new`: begin a fresh session.
 - `GET /stream/{token}`: serve a temporary playback link. The latest 30 links
@@ -278,10 +317,15 @@ Old like/dislike/pending/skip shortcuts need updating.
 Validation remains ad-hoc, without a maintained test suite. After changes,
 exercise Recommend, selected folders, Explore, both players, and Stream. Check
 that Favorite survives No feedback, each response is attached to its encounter,
-unresolved tasks hide clips until addressed, and two browsers have separate
-unfinished feedback. Restart with an open encounter and resume it. Verify
-Refresh Library discovers additions and marks deletions, and that metadata
-and Stream files never enter recommendations.
+and unresolved tasks hide clips until addressed. Open a clip in one browser and
+confirm another device is sent to the same feedback; verify that No feedback
+from either device unlocks both. Check simultaneous recommendations create
+only one open encounter, stale/conflicting feedback cannot overwrite a response,
+and Favorite or Something Else Cancel leaves the gate closed. Restart with an
+open encounter, clear cookies, and verify it still blocks new activity without
+relaunching the player. Check existing stream ranges/HEAD still work. Verify
+Refresh Library discovers additions and marks deletions, and that metadata and
+Stream files never enter recommendations.
 
 Actual VLC playback and Windows mpv launching need a device/PC check. The helper
 does not transcode files; codec support belongs to the player. `.ts` is in the
