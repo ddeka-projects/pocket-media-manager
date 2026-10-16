@@ -80,6 +80,14 @@ the selections. No recommendation profiles remain.
 
 **Explore** shows catalogued folders and files alphabetically. Choosing a file
 records an encounter and opens the player; feedback returns to the same folder.
+Folders and clips appear in separate groups: blue folder cards have a folder
+icon, an Open folder label, and a chevron; media cards have a play icon and a
+Play clip label. Favorites use a light green background and border, while
+Not for me clips use light red. Dark filenames remain readable, and text badges
+identify each preference without relying on color. Choosing Not for me removes
+Favorite automatically, so the clip switches from green to red with only the
+Not for me badge. Not for me clips can still be opened manually.
+
 There is no separate Clip Preferences screen or Test Playback mode. If you are
 testing a file, open it normally and choose No feedback. That records the offer
 but adds no enjoyment or negative rating; the usual brief repeat penalty applies.
@@ -91,13 +99,15 @@ browser on its listing so you can return for the next episode.
 When the player opens, the browser displays feedback:
 
 - **Favorite** is an independent toggle saved immediately, even if you never
-  submit a response. It stays set until explicitly removed.
+  submit a response. It stays set until you remove it or choose Not for me.
 - **Enjoyed it** records a positive report for this encounter.
 - **Too soon** pauses this clip's recommendations for 24 hours.
 - **Not in the mood** withholds this clip for the rest of this browser's session.
 - **Less often** sets a lasting reduced-frequency preference.
-- **Not for me** excludes it from recommendations until you undo that preference.
-  It remains accessible through Explore; Favorite does not override exclusion.
+- **Not for me** removes Favorite and excludes it from recommendations until
+  you undo that preference. It remains accessible through Explore. Choose Allow
+  recommendations again before marking it Favorite again; restoring eligibility
+  alone does not restore the old Favorite status.
 - **No feedback** closes the encounter without expressing an opinion.
 - **Something Else** opens Remake, Fix, Trim, Hold, or Cancel. Saving a task
   closes the encounter without ordinary feedback and hides that file from
@@ -121,7 +131,7 @@ The current tuning is a starting point:
 | Too soon | A full 24-hour pause from the response time, including for Favorites. |
 | Not in the mood | Excludes the clip for the current browser session, until session expiry or Start New Session. |
 | Less often | Reduces its weight to one quarter until Restore normal frequency is used. |
-| Not for me | Excludes it until Allow recommendations again is used. Explore remains available. |
+| Not for me | Removes Favorite and excludes it until Allow recommendations again is used. Explore remains available. |
 | No feedback | Adds no rating or lasting preference. The ordinary offer still receives a brief five-minute repeat penalty. |
 | Something Else | Excludes the file from recommendations and Explore until its task is addressed. |
 

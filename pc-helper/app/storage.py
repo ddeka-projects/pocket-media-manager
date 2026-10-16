@@ -96,6 +96,7 @@ class Database:
                 CREATE UNIQUE INDEX IF NOT EXISTS unresolved_task
                     ON other_feedback(media_id) WHERE resolved_at IS NULL;
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                UPDATE media SET favorite=0 WHERE not_for_me=1 AND favorite=1;
                 PRAGMA user_version=1;
                 COMMIT;
             """)
@@ -331,8 +332,10 @@ class Database:
             else:
                 conn.execute("UPDATE encounters SET feedback=?,resolution=?,closed_at=? WHERE id=?",
                              (response, resolution, now_iso(), encounter_id))
-                if feedback in ("less_often", "not_for_me"):
-                    conn.execute(f"UPDATE media SET {feedback}=1 WHERE id=?", (row["media_id"],))
+                if feedback == "not_for_me":
+                    conn.execute("UPDATE media SET not_for_me=1,favorite=0 WHERE id=?", (row["media_id"],))
+                elif feedback == "less_often":
+                    conn.execute("UPDATE media SET less_often=1 WHERE id=?", (row["media_id"],))
                 self._touch_encounter_session(conn, row)
         return self.encounter(encounter_id, browser_id)
 
@@ -347,7 +350,14 @@ class Database:
                 raise KeyError("Encounter not found in this browser")
             if row["resolution"] != "open":
                 raise Conflict("This encounter is already closed; open the clip through Explore to change its preferences")
-            conn.execute(f"UPDATE media SET {preference}=? WHERE id=?", (int(enabled), row["media_id"]))
+            if preference == "favorite" and enabled:
+                media = conn.execute("SELECT not_for_me FROM media WHERE id=?", (row["media_id"],)).fetchone()
+                if media["not_for_me"]:
+                    raise Conflict("Allow recommendations again before marking this clip as Favorite")
+            if preference == "not_for_me" and enabled:
+                conn.execute("UPDATE media SET not_for_me=1,favorite=0 WHERE id=?", (row["media_id"],))
+            else:
+                conn.execute(f"UPDATE media SET {preference}=? WHERE id=?", (int(enabled), row["media_id"]))
             self._touch_encounter_session(conn, row)
 
     def submit_other(self, encounter_id: str, browser_id: str, feedback_type: str) -> dict[str, Any]:

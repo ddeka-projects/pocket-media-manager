@@ -132,6 +132,39 @@ button.danger {{background:#9d2020;border-color:#9d2020}}
 .notice {{border:1px solid #bcbcb5;border-radius:6px;padding:.8rem;display:grid;gap:.6rem}}
 .error {{color:#9d2020}} .player-toggle {{display:flex;gap:.5rem}}
 .player-toggle button {{padding:.5rem}} .player-toggle .active {{background:#181818;color:white}}
+.explore-section {{display:grid;gap:.65rem}}
+.explore-heading {{display:flex;align-items:center;gap:.5rem;margin:.4rem 0 .1rem}}
+.explore-count {{font-size:.8rem;font-weight:400;color:#626962}}
+a.explore-card,button.explore-card {{display:flex;align-items:center;gap:.85rem;text-align:left;
+  border:1px solid #d1d6cf;border-left-width:4px;border-radius:12px;padding:1rem;
+  background:#fff;color:#242824;line-height:1.4;box-shadow:0 1px 2px #18181808;
+  transition:box-shadow .12s ease}}
+.explore-card:hover {{box-shadow:0 3px 12px #18181812}}
+.explore-card:focus-visible {{outline:3px solid #365989;outline-offset:3px}}
+.explore-icon {{display:grid;place-items:center;flex:0 0 2.25rem;height:2.25rem;
+  border-radius:8px;background:#f0f2ee}}
+.explore-icon svg {{width:1.25rem;height:1.25rem}}
+.explore-content {{display:grid;gap:.25rem;flex:1;min-width:0}}
+.explore-name {{font-weight:600;overflow-wrap:anywhere}}
+.explore-detail {{font-size:.83rem;color:#626962}}
+.explore-chevron {{font-size:1.6rem;line-height:1;flex-shrink:0}}
+a.explore-folder {{background:#edf2f9;border-color:#b7c8df;border-left-color:#6c89af;color:#243e61}}
+.explore-folder .explore-icon {{background:#dce7f5}}
+.explore-folder .explore-detail {{color:#52647c}}
+button.explore-file.is-favorite {{background:#edf8f0;border-color:#83b795;
+  border-left-color:#42855b;color:#173d27}}
+.is-favorite .explore-icon {{background:#d8eddf}}
+.is-favorite .explore-detail {{color:#526056}}
+button.explore-file.is-not-for-me {{background:#fff0ef;border-color:#d5a19c;
+  border-left-color:#b64940;color:#6d2622}}
+.is-not-for-me .explore-icon {{background:#f7dad6}}
+.is-not-for-me .explore-detail {{color:#73514d}}
+.explore-badges {{display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.15rem}}
+.explore-badge {{display:inline-flex;align-items:center;gap:.25rem;font-size:.75rem;
+  font-weight:600;border-radius:999px;padding:.15rem .5rem}}
+.badge-favorite {{background:#d8eddf;color:#1d5934}}
+.badge-not-for-me {{background:#f7dad6;color:#7c2e25}}
+@media (prefers-reduced-motion:reduce) {{a.explore-card,button.explore-card {{transition:none}}}}
 </style></head><body><main>{body}</main>
 <script>document.querySelectorAll('time[datetime]').forEach(function(el) {{
   el.textContent = new Date(el.dateTime).toLocaleString();
@@ -257,8 +290,11 @@ def _feedback_page(request: Request, encounter: dict, launch: dict | None = None
         url = json.dumps(launch["player_url"]).replace("<", "\\u003c")
         body += f'<script>setTimeout(function() {{window.location.href={url};}},100);</script>'
     body += _form(f"/encounters/{identifier}/play", "Open Player")
-    body += _form("/feedback/favorite", "★ Favorite — remove" if favorite else "☆ Mark as Favorite",
-                  {"encounter_id": identifier, "favorite": "0" if favorite else "1"})
+    if not media["not_for_me"]:
+        body += _form("/feedback/favorite", "★ Favorite — remove" if favorite else "☆ Mark as Favorite",
+                      {"encounter_id": identifier, "favorite": "0" if favorite else "1"})
+    else:
+        body += '<p>Allow recommendations again before marking this clip as Favorite.</p>'
     for preference, label in (("less_often", "Restore normal frequency"),
                               ("not_for_me", "Allow recommendations again")):
         if media[preference]:
@@ -419,6 +455,35 @@ def _browse_url(mode: str, path: str) -> str:
     return "/" + mode + ("?" + urlencode({"path": path}) if path else "")
 
 
+def _explore_folder(name: str, path: str) -> str:
+    url = escape(_browse_url("explore", path), quote=True)
+    return f'''<a class="button explore-card explore-folder" href="{url}">
+<span class="explore-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"
+stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+focusable="false"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9H3Z"/></svg></span>
+<span class="explore-content"><span class="explore-name">{escape(name)}</span>
+<span class="explore-detail">Open folder</span></span>
+<span class="explore-chevron" aria-hidden="true">›</span></a>'''
+
+
+def _explore_file(media: dict) -> str:
+    tone = "is-not-for-me" if media["not_for_me"] else "is-favorite" if media["favorite"] else ""
+    badges = ""
+    if media["favorite"] and not media["not_for_me"]:
+        badges += '<span class="explore-badge badge-favorite"><span aria-hidden="true">★</span>Favorite</span>'
+    if media["not_for_me"]:
+        badges += '<span class="explore-badge badge-not-for-me">Not for me</span>'
+    if badges:
+        badges = f'<span class="explore-badges">{badges}</span>'
+    return f'''<form method="post" action="/explore/play">
+<input type="hidden" name="media_id" value="{media['id']}">
+<button type="submit" class="explore-card explore-file {tone}">
+<span class="explore-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"
+focusable="false"><path d="M8 5v14l11-7Z"/></svg></span>
+<span class="explore-content"><span class="explore-name">{escape(Path(media['relative_path']).name)}</span>
+<span class="explore-detail">Play clip</span>{badges}</span></button></form>'''
+
+
 @app.get("/explore", response_class=HTMLResponse)
 def explore(request: Request, path: str | None = None, player: str | None = None):
     _remember_player(request, player)
@@ -436,12 +501,18 @@ def explore(request: Request, path: str | None = None, player: str | None = None
     body = '<h1>Explore</h1><div class="toolbar row">' + _link("/", "Home")
     if relative:
         body += _link(_browse_url("explore", relative.rsplit("/", 1)[0] if "/" in relative else ""), "Back")
-    body += '</div><p>Browsing <em>' + escape(relative or str(_settings(request).media_root)) + '</em></p><div class="stack">'
-    for folder in sorted(folders, key=str.lower):
-        body += _link(_browse_url("explore", prefix + folder), folder)
-    for row in files:
-        body += _form("/explore/play", Path(row["relative_path"]).name, {"media_id": row["id"]})
-    body += '</div>'
+    body += '</div><p>Browsing <em>' + escape(relative or str(_settings(request).media_root)) + '</em></p>'
+    body += '<p>Open a folder to browse. Playing a clip opens your player and feedback.</p>'
+    if folders:
+        body += f'<section class="explore-section" aria-labelledby="explore-folders"><h2 class="explore-heading" id="explore-folders">Folders <span class="explore-count">({len(folders)})</span></h2>'
+        for folder in sorted(folders, key=str.lower):
+            body += _explore_folder(folder, prefix + folder)
+        body += '</section>'
+    if files:
+        body += f'<section class="explore-section" aria-labelledby="explore-clips"><h2 class="explore-heading" id="explore-clips">Clips <span class="explore-count">({len(files)})</span></h2>'
+        for row in files:
+            body += _explore_file(row)
+        body += '</section>'
     if not folders and not files:
         body += '<p>No eligible media here. Refresh Library after adding files.</p>'
     return _page("Explore", body)
