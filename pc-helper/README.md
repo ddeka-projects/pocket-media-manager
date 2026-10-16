@@ -103,8 +103,8 @@ When the player opens, the browser displays feedback:
 - **Favorite** is an independent toggle saved immediately, even if you never
   submit a response. It stays set until you remove it or choose Not for me.
 - **Enjoyed it** records a positive report for this encounter.
-- **Too soon** pauses this clip's recommendations for 24 hours.
-- **Not in the mood** withholds this clip for the rest of this browser's session.
+- **Too soon** pauses this clip's recommendations for 3 days (72 hours), app-wide.
+- **Not in the mood** pauses this clip's recommendations for 48 hours, app-wide.
 - **Less often** sets a lasting reduced-frequency preference.
 - **Not for me** removes Favorite and excludes it from recommendations until
   you undo that preference. It remains accessible through Explore. Choose Allow
@@ -130,8 +130,8 @@ The current tuning is a starting point:
 | --- | --- |
 | Favorite | A fourfold base-weight boost while enabled; timing and exclusion rules still apply. |
 | Enjoyed it | Builds lasting interest, capped at five positive reports. Recent enjoyment also reduces repeat priority, gradually returning to normal over 24 hours. |
-| Too soon | A full 24-hour pause from the response time, including for Favorites. |
-| Not in the mood | Excludes the clip for the current browser session, until session expiry or Start New Session. |
+| Too soon | A full 3-day (72-hour) pause from the response time across all devices, including for Favorites. |
+| Not in the mood | A full 48-hour pause from the response time across all devices, including for Favorites. |
 | Less often | Reduces its weight to one quarter until Restore normal frequency is used. |
 | Not for me | Removes Favorite and excludes it until Allow recommendations again is used. Explore remains available. |
 | No feedback | Adds no rating or lasting preference. The ordinary offer still receives a brief five-minute repeat penalty. |
@@ -139,18 +139,28 @@ The current tuning is a starting point:
 
 Weights influence random selection, not a guaranteed number of appearances.
 Enjoyed it discourages immediate repeats but does not impose the strict pause
-used by Too soon. Restoring a lasting preference does not cancel other timing
-or maintenance restrictions.
+used by Too soon or Not in the mood. It has two separate effects: a lasting
+positive-interest signal and a temporary reduction in repeat priority. For
+example, Enjoyed it on Monday at 8 pm makes the clip less likely to repeat
+immediately, but does not block it. That timing reduction gradually wears off
+and is gone by Tuesday at 8 pm; the positive-interest signal remains. This
+24-hour behavior is unchanged by the longer explicit feedback cooldowns.
+
+Too soon and Not in the mood add no permanent weight penalty and do not change
+Favorite or lasting preferences. When their cooldown expires, that restriction
+disappears completely; other eligibility rules still apply. Selecting the same
+response on a later encounter starts a new cooldown from that response, without
+automatic escalation. Restoring a lasting preference does not cancel other
+timing or maintenance restrictions.
 
 If nothing is currently eligible, the app explains why; it does not quietly
 override your responses. You can manually choose a clip through Explore,
-restore its preferences, wait for Too soon to expire, or start a new session
-for session-only declines.
+restore its preferences, or wait for a cooldown to expire.
 
-## Encounters, Sessions, and Restarts
+## Encounters, Shared State, and Restarts
 
 An encounter is created before opening the player. It records the file,
-selection time, browser, session, source, player, selected folders, return page,
+selection time, source, player, selected folders, return page,
 playback request/failure, and eventually feedback. Launching mpv or sending a
 VLC link does not prove the video was watched or completed. Watch duration and
 completion are not measured.
@@ -165,9 +175,9 @@ unfinished-feedback list on Home.
 Any device can close the shared encounter with an ordinary response,
 **No feedback**, or a saved **Something Else** task. Favorite and restoration
 controls save without closing it; cancelling Something Else also leaves it
-open. Starting a new session, clearing cookies, or restarting the helper does
-not bypass the requirement. A failed player launch still needs closure; use
-No feedback if you do not want to rate it. Returning to feedback never
+open. Clearing cookies or restarting the helper does not bypass the requirement.
+A failed player launch still needs closure; use No feedback if you do not want
+to rate it. Returning to feedback never
 automatically relaunches playback. **Open Player** uses the originally selected
 player, shown on its button, even if you resume from another device.
 
@@ -182,27 +192,18 @@ reload when restored; the backend enforces the rule regardless of the page
 being displayed. Existing media streams, health checks, and static icons remain
 available without taking the feedback gate.
 
-If an older database already contains several open encounters, they are
-presented one at a time, newest first. None are silently discarded; new
-activity stays blocked until all are closed. No extra table or metadata file
-is needed for the gate.
+A persistent browser cookie remembers only UI choices: player and folder
+selections. Recommendation history, positive-interest signals, preferences,
+cooldowns, and the last encounter are shared across devices. There are no
+recommendation sessions, activity timestamps, inactivity timeouts, or Start New
+Session controls. Restarting the helper or changing browsers does not reset a
+cooldown; its deadline comes from the saved feedback timestamp.
 
-A persistent browser cookie identifies its saved settings. Phone and PC
-browsers have separate sessions, while the library and lasting preferences are
-shared. A session begins with an encounter request and is reused while there
-has been less than 30 minutes of inactivity. Encounter requests, timely feedback,
-and Favorite changes during an active encounter extend activity. Page refreshes
-do not. **Start New Session** resets this browser's sitting explicitly.
-
-Late feedback stays with its original encounter and does not revive an expired
-session. Feedback submitted on another device still belongs to the originating
-encounter and session. Restarting the helper alone does not end an active
-session, and session expiry never closes feedback.
-
-Clearing cookies or changing browsers gives you fresh player/selections/session
-settings, but the pending encounter remains visible and closable everywhere.
-This is a single-user, trusted-LAN application, not a multi-user privacy or
-authorization boundary.
+Clearing cookies gives you fresh player/folder choices, but the pending
+encounter remains visible and closable everywhere. Late feedback stays attached
+to its encounter, and cooldowns begin when that feedback is submitted, not when
+the player opened. This is a single-user, trusted-LAN application, not a
+multi-user privacy or authorization boundary.
 
 ## Catalog and Maintenance
 
@@ -227,9 +228,9 @@ after resolving its task; choose No feedback if you only want to check playback.
 **Clean Up** removes only selected unavailable records and their encounters,
 never media files. Records with unresolved tasks are withheld from cleanup.
 **Reset Preferences** confirms before clearing all Favorites, Less often,
-Not for me, and encounters across browsers. The catalog, player/selections,
-and Something Else tasks remain; session IDs are reset. Both operations save
-a database backup first.
+Not for me, and encounters (including feedback cooldowns) across the app. The
+catalog, player/selections, and Something Else tasks remain. Both operations
+save a database backup first.
 
 ## Storage and Backups
 
@@ -249,16 +250,29 @@ separate database server is needed. Four application tables are used:
 | Table | Stored data |
 | --- | --- |
 | `media` | Relative path, file size, precise modification timestamp, discovery time, availability, Favorite, Less often, Not for me. |
-| `encounters` | Browser/session, media record, selection and playback-request timestamps, source/context, launch outcome/error, one response, resolution, close time. |
+| `encounters` | Media record, selection and playback-request timestamps, source/context, launch outcome/error, one response, resolution, close time. No browser or session ownership. |
 | `other_feedback` | Media record, task type, creation time, resolution time. |
-| `settings` | Per-browser player/selections/session activity, catalog refresh and backup bookkeeping. |
+| `settings` | Per-browser player/folder selections, catalog refresh and backup bookkeeping. |
 
 Times are stored in UTC and displayed in the browser's local timezone. File
 modification is stored as nanoseconds (`modified_ns`) to detect in-place edits.
 There are no separate preference, score, summary, or feedback JSON files.
+Cooldowns are derived from the latest corresponding feedback timestamps, not
+stored in extra tables or timer files.
 
 This version starts fresh. Existing `_mpv_prefs.json` and `other_feedback.jsonl`
 files are ignored and left untouched. They are not imported or updated.
+
+The session-free SQLite schema is version 2. There is no compatibility layer
+for older databases. When updating from a version that stored sessions, stop
+the helper first and rename the entire `MEDIA_ROOT\.pocket-media-manager`
+folder, for example to `.pocket-media-manager.previous`. Keep it together so its
+database, any WAL companion files, and backups stay intact. Restarting creates
+a new metadata folder and scans the library. Feedback, Favorites, and other app
+metadata start empty; media files are never removed or modified. An older
+database left in place produces a clear startup error instead of being
+overwritten. Restore instructions below apply to backups from this schema;
+older-schema backups are not imported.
 
 SQLite changes are transactional. A damaged database is reported rather than
 silently replaced with an empty one. Automatic snapshot backups are checked at
@@ -279,13 +293,13 @@ overwritten on restart).
 ## API and Shortcuts
 
 The API has changed with this fresh start. Keep a cookie jar to retain this
-browser's player, selections, session, and historical last encounter. Feedback
-is shared across browsers and requires `encounter_id`, not the originating
-cookie. Old like/dislike/pending/skip shortcuts need updating.
+browser's player and folder selections. Feedback is shared across browsers and
+requires `encounter_id`, not the originating cookie. Old like/dislike/pending/skip
+shortcuts need updating.
 
 While an encounter is open, requests outside its feedback workflow receive
 HTTP **409** for JSON clients, with `code=feedback_required`, `encounter_id`,
-and `feedback_page`. This includes `/next`, new playback, settings, sessions,
+and `feedback_page`. This includes `/next`, new playback, settings,
 refresh, reset, and cleanup. HTML navigation redirects to the feedback page
 instead. `/last`, feedback controls, and existing media-byte requests remain
 available. State-dependent app responses are not cached.
@@ -305,9 +319,8 @@ available. State-dependent app responses are not cached.
   `remake`, `fix`, `trim`, or `hold`.
 - `GET /feedback/{encounter_id}`: view shared feedback without relaunching.
 - `GET /last`: the shared pending encounter and current media preferences, or
-  this browser's last encounter when no feedback is pending.
+  the app's last encounter when no feedback is pending.
 - `POST /library/refresh`: refresh the catalog; JSON clients receive media count.
-- `POST /session/new`: begin a fresh session.
 - `GET /stream/{token}`: serve a temporary playback link. The latest 30 links
   are retained in memory and expire on helper restart; resumed feedback can
   request a new link through Open Player.
@@ -326,6 +339,13 @@ open encounter, clear cookies, and verify it still blocks new activity without
 relaunching the player. Check existing stream ranges/HEAD still work. Verify
 Refresh Library discovers additions and marks deletions, and that metadata and
 Stream files never enter recommendations.
+
+Check Too soon excludes a clip for exactly 72 hours and Not in the mood for
+exactly 48 hours from feedback, including across browsers and helper restarts.
+Confirm expiry does not change Favorite, Less often, or Not for me, and Explore
+can open temporarily excluded clips. Verify no Start New Session control or
+session fields are present, `/last` is shared after closure, and Enjoyed it and
+other weight calculations remain unchanged.
 
 Actual VLC playback and Windows mpv launching need a device/PC check. The helper
 does not transcode files; codec support belongs to the player. `.ts` is in the

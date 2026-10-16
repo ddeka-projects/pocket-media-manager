@@ -293,16 +293,15 @@ def _launch(request: Request, encounter: dict) -> dict:
     return result
 
 
-def _encounter(request: Request, media: dict, session_id: str, source: str,
+def _encounter(request: Request, media: dict, source: str,
                return_path: str, folders: list[str] | None = None) -> dict:
-    return _db(request).create_encounter(media["id"], request.state.browser_id, session_id, source,
+    return _db(request).create_encounter(media["id"], source,
         {"player": request.state.browser["player"], "folders": folders or [], "return_path": return_path})
 
 
 def _recommend(request: Request, folders: list[str] | None = None) -> dict:
     database = _db(request)
-    session_id = database.begin_session(request.state.browser_id)
-    candidates = database.candidates(session_id)
+    candidates = database.candidates()
     if folders is not None:
         chosen = set(folders)
         candidates = [row for row in candidates
@@ -314,7 +313,7 @@ def _recommend(request: Request, folders: list[str] | None = None) -> dict:
         except ValueError:
             candidates.remove(selected)
             continue
-        return _encounter(request, selected, session_id, "selected" if folders is not None else "recommend",
+        return _encounter(request, selected, "selected" if folders is not None else "recommend",
                           "/select" if folders is not None else "/", folders)
     raise ValueError("No eligible media files were found. Use Explore to restore clip preferences, "
                      "or Refresh Library after adding or changing files.")
@@ -388,7 +387,7 @@ def home(request: Request):
         body += f'<form method="get" action="{url}"><input type="hidden" name="player" value="{player}"><button class="secondary">{label}</button></form>'
     for url, label in (("/feedback/addressed", "Address Other Feedback"), ("/cleanup", "Clean Up"), ("/reset", "Reset Preferences")):
         body += _link(url, label)
-    body += _form("/library/refresh", "Refresh Library") + _form("/session/new", "Start New Session")
+    body += _form("/library/refresh", "Refresh Library")
     body += '</div><script>document.querySelectorAll("[data-player]").forEach(function(btn) {'
     body += '''btn.addEventListener("click",function() {
       var body=new URLSearchParams(); body.set("player",btn.dataset.player);
@@ -404,12 +403,6 @@ def home(request: Request):
 @app.post("/settings/player")
 def remember_player(request: Request, player: str = Form(...)) -> dict:
     return {"player": _remember_player(request, player)}
-
-
-@app.post("/session/new")
-def new_session(request: Request):
-    session_id = _db(request).begin_session(request.state.browser_id, force=True)
-    return RedirectResponse("/", 303) if _html(request) else {"session_id": session_id}
 
 
 @app.post("/library/refresh")
@@ -567,9 +560,8 @@ def play_explored(request: Request, media_id: int = Form(...)):
     database.verify_media(media_id)
     if database.blocked(media_id):
         raise ValueError("This file has outstanding Something Else feedback")
-    session_id = database.begin_session(request.state.browser_id)
     parent = media["relative_path"].rsplit("/", 1)[0] if "/" in media["relative_path"] else ""
-    encounter = _encounter(request, media, session_id, "explore", _browse_url("explore", parent))
+    encounter = _encounter(request, media, "explore", _browse_url("explore", parent))
     return _feedback_page(request, encounter, _launch(request, encounter))
 
 
@@ -761,7 +753,7 @@ def reset_preferences(request: Request):
 
 @app.get("/last")
 def last(request: Request):
-    encounter = _db(request).pending_encounter() or _db(request).latest_encounter(request.state.browser_id)
+    encounter = _db(request).pending_encounter() or _db(request).latest_encounter()
     if not encounter:
-        raise KeyError("No encounter has been made in this browser")
+        raise KeyError("No encounter has been made yet")
     return {"encounter": encounter, "media": _db(request).media(encounter["media_id"])}

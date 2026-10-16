@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-TOO_SOON_HOURS = 24
+TOO_SOON_HOURS = 72
+NOT_IN_MOOD_HOURS = 48
 
 
 def elapsed_hours(value: str | None, now: datetime) -> float:
@@ -36,11 +37,11 @@ def pick_weighted(
     eligible = [
         item for item in media
         if not item["not_for_me"]
-        and not item.get("declined_this_session")
         and elapsed_hours(item.get("last_too_soon_at"), now) >= TOO_SOON_HOURS
+        and elapsed_hours(item.get("last_not_in_mood_at"), now) >= NOT_IN_MOOD_HOURS
     ]
     if not eligible:
-        raise ValueError("No clips fit right now. Try Explore or start a new session.")
+        raise ValueError("No clips fit right now. Try Explore or wait for a cooldown to expire.")
     return random.choices(
         eligible, weights=[compute_weight(item, now) for item in eligible], k=1
     )[0]

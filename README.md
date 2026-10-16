@@ -74,19 +74,23 @@ Start-ScheduledTask -TaskName "Pocket Media Manager PC Helper"
 - **Refresh Library** discovers new files and checks for moves, edits, and
   deletions. A full scan also runs at startup; everyday navigation and
   recommendations use the stored catalog.
-- **Start New Session** starts a fresh sitting, including clearing the
-  session-only effect of Not in the mood. Too soon still applies for 24 hours.
 - **Clean Up** removes selected unavailable database records and their history,
   never media files. Records with outstanding maintenance tasks are protected.
 - **Reset Preferences** confirms before clearing Favorites, lasting preferences,
   and encounters. It retains the catalog and Something Else tasks and saves a
   database backup first.
 
-Each browser remembers its player and selections and has its own 30-minute
-session. Favorites and lasting clip preferences are shared. Only one clip can
-await feedback across the entire app. Until it is closed, every device returns
-to that feedback screen instead of Home, Explore, or other workflows. Choose a
-response, No feedback, or save Something Else to continue; Favorite alone does
+Each browser remembers its player and folder selections; recommendation history,
+preferences, and cooldowns are shared across the entire app. **Too soon** pauses
+recommendations for 3 days (72 hours); **Not in the mood** pauses them for
+48 hours. Both run from the feedback time, leave lasting preferences unchanged,
+and still allow deliberate playback through Explore. There are no recommendation
+sessions, inactivity timeouts, or Start New Session controls.
+
+Only one clip can await feedback across the entire app. Until it is closed,
+every device returns to that feedback screen instead of Home, Explore, or other
+workflows. Choose a response, No feedback, or save Something Else to continue;
+Favorite alone does
 not close it. Any device can finish it, even after a restart or clearing cookies.
 Returning does not automatically reopen the player. Home no longer has an
 unfinished-feedback queue, and playback already underway remains uninterrupted.
@@ -98,6 +102,12 @@ This version starts fresh: `_mpv_prefs.json` and `other_feedback.jsonl` are
 ignored and left untouched. There is no legacy import or recommendation profile
 selector. Renamed or adjusted media can become new records without inherited
 preferences.
+
+The session-free database uses schema version 2. Older SQLite databases are not
+migrated. Before running this version against an existing library, stop the
+helper and rename `MEDIA_ROOT/.pocket-media-manager` to keep it aside, then
+restart. A fresh metadata folder is created with empty feedback and preferences;
+your media files are untouched. See the helper README for details.
 
 The helper does not measure video completion or watch duration. VLC/mpv handle
 playback; the PC must be awake and reachable for phone streaming. Library changes

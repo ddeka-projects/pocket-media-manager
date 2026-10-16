@@ -5,7 +5,7 @@ import os
 import sqlite3
 import uuid
 from contextlib import closing, contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any, Iterator
@@ -21,7 +21,6 @@ FEEDBACK = {
     "not_for_me": "Not for me",
 }
 OTHER_FEEDBACK = {"remake": "Remake", "fix": "Fix", "trim": "Trim", "hold": "Hold"}
-SESSION_TIMEOUT = timedelta(minutes=30)
 
 
 def now_iso() -> str:
@@ -52,8 +51,12 @@ class Database:
             (self.settings.metadata_root / name).mkdir(exist_ok=True)
         with closing(sqlite3.connect(self.path)) as conn:
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
-                raise ValueError(f"Unsupported database version: {version}")
+            if version not in (0, 2):
+                raise ValueError(
+                    f"Database version {version} is not supported by this build. "
+                    f"Stop the helper, move {self.settings.metadata_root} aside, and restart "
+                    "to initialize fresh metadata. Media files are not changed."
+                )
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
                 BEGIN;
@@ -73,8 +76,6 @@ class Database:
                 CREATE TABLE IF NOT EXISTS encounters (
                     id TEXT PRIMARY KEY,
                     media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
-                    browser_id TEXT NOT NULL,
-                    session_id TEXT NOT NULL,
                     selected_at TEXT NOT NULL,
                     source TEXT NOT NULL CHECK(source IN ('recommend','selected','explore','test')),
                     context TEXT NOT NULL,
@@ -91,7 +92,6 @@ class Database:
                     CHECK((resolution='answered') = (feedback IS NOT NULL))
                 );
                 CREATE INDEX IF NOT EXISTS encounter_media ON encounters(media_id,selected_at);
-                CREATE INDEX IF NOT EXISTS encounter_browser ON encounters(browser_id,selected_at);
                 CREATE INDEX IF NOT EXISTS encounter_open ON encounters(selected_at,id)
                     WHERE resolution='open';
                 CREATE TABLE IF NOT EXISTS other_feedback (
@@ -105,7 +105,7 @@ class Database:
                     ON other_feedback(media_id) WHERE resolved_at IS NULL;
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 UPDATE media SET favorite=0 WHERE not_for_me=1 AND favorite=1;
-                PRAGMA user_version=1;
+                PRAGMA user_version=2;
                 COMMIT;
             """)
 
@@ -147,8 +147,7 @@ class Database:
             with self.connect(write=True) as conn:
                 value = self._setting(conn, key)
                 if value is None:
-                    value = {"player": "vlc", "folders": [], "session_id": None,
-                             "last_activity_at": None}
+                    value = {"player": "vlc", "folders": []}
                     self._save_setting(conn, key, value)
         return value
 
@@ -159,30 +158,6 @@ class Database:
             value.update(changes)
             self._save_setting(conn, "browser:" + browser_id, value)
         return value
-
-    def begin_session(self, browser_id: str, force: bool = False,
-                      now: datetime | None = None) -> str:
-        now = now or datetime.now(timezone.utc)
-        with self.connect(write=True) as conn:
-            self.require_idle(conn)
-            value = self._setting(conn, "browser:" + browser_id)
-            last = value["last_activity_at"]
-            if (force or not value["session_id"] or not last
-                    or now - datetime.fromisoformat(last) >= SESSION_TIMEOUT):
-                value["session_id"] = uuid.uuid4().hex
-            value["last_activity_at"] = now.isoformat(timespec="microseconds")
-            self._save_setting(conn, "browser:" + browser_id, value)
-            return value["session_id"]
-
-    def _touch_encounter_session(self, conn: sqlite3.Connection, encounter: sqlite3.Row) -> None:
-        key = "browser:" + encounter["browser_id"]
-        value = self._setting(conn, key)
-        now = datetime.now(timezone.utc)
-        if (value and value["session_id"] == encounter["session_id"]
-                and value["last_activity_at"]
-                and now - datetime.fromisoformat(value["last_activity_at"]) < SESSION_TIMEOUT):
-            value["last_activity_at"] = now.isoformat(timespec="microseconds")
-            self._save_setting(conn, key, value)
 
     def refresh_catalog(self, *, allow_pending: bool = False) -> int:
         with self.scan_lock:
@@ -235,28 +210,27 @@ class Database:
             return [dict(row) for row in conn.execute(
                 f"SELECT m.* FROM media m WHERE {where} ORDER BY m.relative_path COLLATE NOCASE")]
 
-    def candidates(self, session_id: str) -> list[dict[str, Any]]:
+    def candidates(self) -> list[dict[str, Any]]:
         with self.connect() as conn:
             rows = conn.execute("""
                 SELECT m.*,
                     COALESCE(h.enjoyed_count,0) AS enjoyed_count,
                     h.last_enjoyed_at, h.last_offered_at, h.last_too_soon_at,
-                    COALESCE(h.declined_this_session,0) AS declined_this_session
+                    h.last_not_in_mood_at
                 FROM media m LEFT JOIN (
                     SELECT media_id,
                         SUM(feedback='enjoyed') AS enjoyed_count,
                         MAX(CASE WHEN feedback='enjoyed' THEN closed_at END) AS last_enjoyed_at,
                         MAX(CASE WHEN launch_status='requested' THEN selected_at END) AS last_offered_at,
                         MAX(CASE WHEN feedback='too_soon' THEN closed_at END) AS last_too_soon_at,
-                        MAX(CASE WHEN session_id=? AND feedback='not_in_mood' THEN 1 ELSE 0 END)
-                            AS declined_this_session
+                        MAX(CASE WHEN feedback='not_in_mood' THEN closed_at END) AS last_not_in_mood_at
                     FROM encounters WHERE source!='test' GROUP BY media_id
                 ) h ON h.media_id=m.id
                 WHERE m.available=1 AND m.not_for_me=0
                     AND NOT EXISTS (SELECT 1 FROM other_feedback o
                                     WHERE o.media_id=m.id AND o.resolved_at IS NULL)
                 ORDER BY m.relative_path COLLATE NOCASE
-            """, (session_id,))
+            """)
             return [dict(row) for row in rows]
 
     def media(self, media_id: int) -> dict[str, Any]:
@@ -292,17 +266,15 @@ class Database:
             raise ValueError("File changed; refresh the library to catalogue its new record")
         return path
 
-    def create_encounter(self, media_id: int, browser_id: str, session_id: str,
-                         source: str, context: dict[str, Any]) -> dict[str, Any]:
+    def create_encounter(self, media_id: int, source: str, context: dict[str, Any]) -> dict[str, Any]:
         if source not in {"recommend", "selected", "explore"}:
             raise ValueError("Unknown encounter source")
         encounter_id = uuid.uuid4().hex
         with self.connect(write=True) as conn:
             self.require_idle(conn)
             conn.execute("""INSERT INTO encounters
-                (id,media_id,browser_id,session_id,selected_at,source,context)
-                VALUES (?,?,?,?,?,?,?)""",
-                (encounter_id, media_id, browser_id, session_id, now_iso(), source, json.dumps(context)))
+                (id,media_id,selected_at,source,context) VALUES (?,?,?,?,?)""",
+                (encounter_id, media_id, now_iso(), source, json.dumps(context)))
         return self.encounter(encounter_id)
 
     @staticmethod
@@ -344,10 +316,9 @@ class Database:
                 raise KeyError("Encounter not found")
             return self._encounter_dict(row)
 
-    def latest_encounter(self, browser_id: str) -> dict[str, Any] | None:
+    def latest_encounter(self) -> dict[str, Any] | None:
         with self.connect() as conn:
-            row = conn.execute("SELECT id FROM encounters WHERE browser_id=?"
-                               " ORDER BY selected_at DESC,id DESC LIMIT 1", (browser_id,)).fetchone()
+            row = conn.execute("SELECT id FROM encounters ORDER BY selected_at DESC,id DESC LIMIT 1").fetchone()
         return self.encounter(row[0]) if row else None
 
     def _require_open(self, conn: sqlite3.Connection, encounter_id: str) -> None:
@@ -392,7 +363,6 @@ class Database:
                     conn.execute("UPDATE media SET not_for_me=1,favorite=0 WHERE id=?", (row["media_id"],))
                 elif feedback == "less_often":
                     conn.execute("UPDATE media SET less_often=1 WHERE id=?", (row["media_id"],))
-                self._touch_encounter_session(conn, row)
         return self.encounter(encounter_id)
 
     def preference_for_encounter(self, encounter_id: str, preference: str, enabled: bool) -> None:
@@ -409,7 +379,6 @@ class Database:
                 conn.execute("UPDATE media SET not_for_me=1,favorite=0 WHERE id=?", (row["media_id"],))
             else:
                 conn.execute(f"UPDATE media SET {preference}=? WHERE id=?", (int(enabled), row["media_id"]))
-            self._touch_encounter_session(conn, row)
 
     def submit_other(self, encounter_id: str, feedback_type: str) -> dict[str, Any]:
         if feedback_type not in OTHER_FEEDBACK:
@@ -435,7 +404,6 @@ class Database:
                 context["other_feedback_type"] = feedback_type
                 conn.execute("UPDATE encounters SET resolution='other_feedback',closed_at=?,context=? WHERE id=?",
                              (timestamp, json.dumps(context), encounter_id))
-                self._touch_encounter_session(conn, row)
         return self.encounter(encounter_id)
 
     def tasks(self) -> list[dict[str, Any]]:
@@ -464,11 +432,6 @@ class Database:
             self.require_idle(conn)
             conn.execute("DELETE FROM encounters")
             conn.execute("UPDATE media SET favorite=0,less_often=0,not_for_me=0")
-            rows = list(conn.execute("SELECT key,value FROM settings WHERE key LIKE 'browser:%'"))
-            for row in rows:
-                value = json.loads(row["value"])
-                value.update(session_id=None, last_activity_at=None)
-                self._save_setting(conn, row["key"], value)
 
     def backup(self, daily: bool = False) -> Path | None:
         with self.scan_lock:
