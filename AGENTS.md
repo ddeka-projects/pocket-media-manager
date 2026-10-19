@@ -1,38 +1,21 @@
-# AGENTS.md
+# Pocket Media Manager - Agent Guidance
 
-This repository is being developed collaboratively with a strong emphasis on
-keeping documentation current and useful for a non-specialist project owner.
+## Ecosystem
+This repository is part of `ddeka-projects`, a personal ecosystem of independent tools:
+- `pocket-entertainment-catalog`: entertainment journeys and editing-work tracking.
+- `pocket-manga-editor`: manga reading, page selection, and export.
+- `pocket-media-clip-selector`: video-moment bookmarking and review.
+- `pocket-media-manager`: local media recommendations, playback, and feedback.
 
-## Primary Project Preference
+They share a development philosophy, not a required architecture or runtime. Keep each repository independently maintainable.
 
-Documentation quality is a first-class requirement.
+## This application
+The app helps rediscover, play, and give feedback on a local media collection through a Windows helper, VLC, and mpv. Preserve the meaning of favorites, recommendation feedback, cooldowns, and maintenance tasks.
 
-When making relevant changes, always update the documentation in the same body
-of work. Do not treat documentation as optional follow-up polish.
-
-## Documentation Expectations
-
-Whenever a meaningful change is introduced, update the appropriate README files
-to reflect it. This includes changes to:
-
-- current limitations or known issues
-- setup or run workflows
-- important stored data or behavior flow
-- new scripts, commands, or operational steps
-
-## Documentation Style
-
-Prefer documentation that explains:
-
-- what the feature does
-- why it exists
-- how a user experiences it
-- how the major parts connect
-
-Avoid excessive low-level code commentary unless it is needed to understand the
-functional behavior of the system.
-
-## Default Rule For Future Changes
-
-If a change would make the current documentation even slightly misleading or out
-of date, update the docs before considering the work complete.
+## Working principles
+- Build for one user: a Windows-hosted app accessed primarily from an iPhone over a trusted home LAN, with desktop browser support. Avoid unnecessary accounts, multi-user systems, or public services.
+- Prioritize simplicity, reliability, maintainability, and data safety over extra features or abstraction.
+- Treat brainstorming as discussion, not permission to edit. Evaluate whether a change is worthwhile and challenge assumptions constructively.
+- Read this repository's current README, helper README, and code before deciding implementation details. Verify relevant behavior where feasible; report checks that need Windows or device testing.
+- Look at sibling repositories for useful precedents when relevant and available, but do not modify them unless explicitly requested. Keep changes focused.
+- Documentation is part of the change, not optional follow-up. When meaningful work changes behavior, limitations, setup, commands, scripts, or stored data, update the relevant README/docs in the same task unless the user explicitly restricts file changes. Explain what changed, why it matters, and how to use it; avoid unnecessary code detail.
