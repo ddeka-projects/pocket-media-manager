@@ -2,7 +2,7 @@
 __pycache__/
 *.pyc
 
-pc-helper/.env
-pc-helper/_mpv_prefs.json
-pc-helper/.tmp/
+.env
+_mpv_prefs.json
+.tmp/
 .pocket-media-manager/

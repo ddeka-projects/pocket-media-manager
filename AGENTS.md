@@ -16,6 +16,6 @@ The app helps rediscover, play, and give feedback on a local media collection th
 - Build for one user: a Windows-hosted app accessed primarily from an iPhone over a trusted home LAN, with desktop browser support. Avoid unnecessary accounts, multi-user systems, or public services.
 - Prioritize simplicity, reliability, maintainability, and data safety over extra features or abstraction.
 - Treat brainstorming as discussion, not permission to edit. Evaluate whether a change is worthwhile and challenge assumptions constructively.
-- Read this repository's current README, helper README, and code before deciding implementation details. Verify relevant behavior where feasible; report checks that need Windows or device testing.
+- Read this repository's current README, docs/usage.md, and code before deciding implementation details. Verify relevant behavior where feasible; report checks that need Windows or device testing.
 - Look at sibling repositories for useful precedents when relevant and available, but do not modify them unless explicitly requested. Keep changes focused.
 - Documentation is part of the change, not optional follow-up. When meaningful work changes behavior, limitations, setup, commands, scripts, or stored data, update the relevant README/docs in the same task unless the user explicitly restricts file changes. Explain what changed, why it matters, and how to use it; avoid unnecessary code detail.

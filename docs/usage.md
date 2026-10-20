@@ -1,4 +1,4 @@
-# Pocket Media Manager PC Helper
+# Pocket Media Manager usage guide
 
 The helper runs on the Windows PC holding your media. It provides a phone/PC
 browser interface, one recommendation engine, VLC phone streaming, mpv desktop
@@ -6,10 +6,10 @@ playback, and feedback for revisiting favorite moments.
 
 ## Setup and Windows Startup
 
-From Git Bash in this directory:
+Use Windows PowerShell 5.1+ and Python 3.11 or newer. From ordinary PowerShell in the repository root:
 
-```bash
-./scripts/bootstrap.sh
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-windows.ps1
 ```
 
 The script creates `.venv`, installs dependencies, and copies `.env.example` to
@@ -26,7 +26,7 @@ MPV_PATH=mpv
 ```
 
 `MEDIA_ROOT` must be an existing accessible directory. Relative paths are
-resolved against `pc-helper/`. The helper does not create a missing media root:
+resolved against the repository root. The helper does not create a missing media root:
 that could hide a typo or a disconnected drive. `STREAM_FOLDER` must be inside
 the media root and cannot be the metadata folder. Directory and file symlinks
 are omitted from catalog scans.
@@ -35,29 +35,46 @@ Use the PC's LAN address for `PUBLIC_BASE_URL`, not `localhost`. Find it with
 `ipconfig`. Choose VLC or mpv on the home page; each browser remembers that
 choice. Set `MPV_PATH` to the executable's full path if mpv is not on PATH.
 
-For everyday use, run from an elevated PowerShell in this directory:
+For everyday use, run from ordinary PowerShell in the repository root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1
 ```
 
-The scheduled task starts the helper when your user signs in and runs in your
-desktop session so mpv is visible. The PC must remain awake and reachable.
+For first-time phone access or after changing the port, run from **PowerShell as
+Administrator using the same Windows account**:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1 -ConfigureFirewall
+```
+
+This allows the configured TCP port only from `LocalSubnet` on the **Private**
+firewall profile. Without `-ConfigureFirewall`, the installer leaves firewall
+rules untouched. The server always runs with limited privileges.
+
+The **Pocket Media Manager** scheduled task starts at your user logon and runs
+in your desktop session with limited privileges, so mpv is visible. It has no
+runtime limit. The PC must remain signed in, awake, and reachable.
 After changing `.env`, restart it:
 
 ```powershell
-Stop-ScheduledTask -TaskName "Pocket Media Manager PC Helper"
-Start-ScheduledTask -TaskName "Pocket Media Manager PC Helper"
+Stop-ScheduledTask -TaskName "Pocket Media Manager"
+Start-ScheduledTask -TaskName "Pocket Media Manager"
 ```
 
-For development, remove the always-on task before starting the reload server:
+For development, stop/remove the always-on task before starting a foreground server.
+Removal keeps the firewall rule unless `-RemoveFirewall` is supplied:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\remove-startup-task.ps1
+# Optional, from elevated PowerShell: also remove this app's firewall rule.
+powershell -ExecutionPolicy Bypass -File .\scripts\remove-startup-task.ps1 -RemoveFirewall
 ```
 
-```bash
-./scripts/run-dev.sh
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1
+# Optional Python-code reload while developing:
+powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1 -Reload
 ```
 
 The normal server can also be run manually:
@@ -68,7 +85,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-server.ps1
 
 Open `http://localhost:8787/` on the PC or `http://<PC_LAN_IP>:8787/` on your
 phone. If `/health` is unreachable, check the private-network Windows Firewall
-rule for Python/Uvicorn and that both devices are on the same network. This is
+rule (`-ConfigureFirewall`) and that both devices are on the same network. This is
 a private-home-network app; do not expose it to the public internet.
 
 ## Watching and Giving Feedback

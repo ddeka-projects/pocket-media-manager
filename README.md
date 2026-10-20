@@ -12,13 +12,13 @@ that need attention.
 
 ## Quick Start
 
-From Git Bash in `pc-helper/`:
+Use Windows PowerShell 5.1+ and Python 3.11 or newer. From ordinary PowerShell in the repository root:
 
-```bash
-./scripts/bootstrap.sh
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-windows.ps1
 ```
 
-Edit `pc-helper/.env`:
+Edit `.env` in the repository root:
 
 ```text
 MEDIA_ROOT=E:\Hobby Disk
@@ -33,26 +33,53 @@ No database server or cloud account is needed.
 
 For development:
 
-```bash
-./scripts/run-dev.sh
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1
+# Optional Python-code reload while developing:
+powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1 -Reload
 ```
 
-For everyday Windows use, run once from an elevated PowerShell in `pc-helper/`:
+For everyday Windows use, run from ordinary PowerShell in the repository root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1
 ```
 
-The helper starts when you sign in, under your account, so mpv opens on your
-desktop. Open `http://localhost:8787/` on the PC, or
+For first-time phone access or after changing the port, run from **PowerShell as
+Administrator using the same Windows account**:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1 -ConfigureFirewall
+```
+
+This allows the configured TCP port only from `LocalSubnet` on the **Private**
+firewall profile. Without `-ConfigureFirewall`, the installer leaves firewall
+rules untouched. The server always runs with limited privileges.
+
+The **Pocket Media Manager** task starts when you sign in, under your account
+with limited privileges and no runtime limit, so mpv opens on your desktop.
+The PC must be signed in and awake. Open `http://localhost:8787/` on the PC, or
 `http://<PC_LAN_IP>:8787/` on your phone on the same network.
 
 After editing `.env`, restart the scheduled task:
 
 ```powershell
-Stop-ScheduledTask -TaskName "Pocket Media Manager PC Helper"
-Start-ScheduledTask -TaskName "Pocket Media Manager PC Helper"
+Stop-ScheduledTask -TaskName "Pocket Media Manager"
+Start-ScheduledTask -TaskName "Pocket Media Manager"
 ```
+
+To remove automatic startup from ordinary PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\remove-startup-task.ps1
+# Optional, from elevated PowerShell: also remove this app's firewall rule.
+powershell -ExecutionPolicy Bypass -File .\scripts\remove-startup-task.ps1 -RemoveFirewall
+```
+
+Removal leaves firewall rules in place unless `-RemoveFirewall` is supplied.
+Media, database, and feedback are retained. Foreground and development launchers
+use the same `.env` settings as the app; real environment variables take precedence.
+Stop the scheduled server before running a foreground or development instance.
 
 ## Everyday Use
 
@@ -107,7 +134,7 @@ The session-free database uses schema version 2. Older SQLite databases are not
 migrated. Before running this version against an existing library, stop the
 helper and rename `MEDIA_ROOT/.pocket-media-manager` to keep it aside, then
 restart. A fresh metadata folder is created with empty feedback and preferences;
-your media files are untouched. See the helper README for details.
+your media files are untouched. See [the usage guide](docs/usage.md) for details.
 
 The helper does not measure video completion or watch duration. VLC/mpv handle
 playback; the PC must be awake and reachable for phone streaming. Library changes
@@ -115,5 +142,5 @@ appear after startup or Refresh Library. `.ts` is now included in the default
 extension list; existing `.env` extension overrides still need it added.
 
 For this personal app, validation remains ad-hoc rather than a maintained test
-suite. See [the helper README](pc-helper/README.md) for storage details, backup
+suite. See [the usage guide](docs/usage.md) for storage details, backup
 and restore, API changes, and the checks to run after changes.
