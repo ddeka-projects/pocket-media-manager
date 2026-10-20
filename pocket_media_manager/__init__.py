@@ -1,1 +1,1 @@
-"""Pocket Media Manager PC helper package."""
+"""Pocket Media Manager local web application."""

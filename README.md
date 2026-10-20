@@ -1,146 +1,130 @@
 # Pocket Media Manager
 
-Pocket Media Manager helps you revisit moments in your local media collection.
-A small Windows PC helper chooses a clip, opens VLC on your phone or mpv on your
-PC, and lets you express how that recommendation felt.
+A mobile-friendly local web app for rediscovering your media collection,
+playing clips in VLC on your phone or mpv on your PC, and remembering feedback.
+The Windows PC stores your data and serves the app over your home network.
 
-There is one recommendation engine. **Favorite** is your lasting seal of
-approval, separate from **Enjoyed it**, **Too soon**, **Not in the mood**,
-**Less often**, and **Not for me**. **No feedback** covers testing or simply
-moving on. **Something Else** keeps the Remake/Fix/Trim/Hold workflow for files
-that need attention.
+## Windows setup
 
-## Quick Start
-
-Use Windows PowerShell 5.1+ and Python 3.11 or newer. From ordinary PowerShell in the repository root:
+Use Windows PowerShell 5.1+ and Python 3.11+. From ordinary PowerShell in the
+repository root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-windows.ps1
 ```
 
-Edit `.env` in the repository root:
+Edit the root `.env`, using [.env.example](.env.example) as the reference:
 
 ```text
-MEDIA_ROOT=E:\Hobby Disk
-PUBLIC_BASE_URL=http://192.168.1.50:8787
-MPV_PATH=mpv
+POCKET_MEDIA_MANAGER_MEDIA_ROOT=E:\Hobby Disk
+POCKET_MEDIA_MANAGER_PUBLIC_BASE_URL=http://192.168.1.50:8787
+POCKET_MEDIA_MANAGER_MPV_PATH=mpv
 ```
 
-Use the PC's LAN address so your phone can reach it. `MEDIA_ROOT` must already
-exist. The helper initializes its SQLite database, backups, and logs inside
-`MEDIA_ROOT\.pocket-media-manager`. Your videos remain in their existing folders.
-No database server or cloud account is needed.
+The media directory must already exist and use an absolute path outside this
+repository. Use the PC's LAN address for phone playback. Set the full mpv
+executable path if it is not on PATH. Real environment variables override `.env`;
+Windows backslashes are read literally.
 
-For development:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1
-# Optional Python-code reload while developing:
-powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1 -Reload
-```
-
-For everyday Windows use, run from ordinary PowerShell in the repository root:
+Install automatic startup from ordinary PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1
 ```
 
-For first-time phone access or after changing the port, run from **PowerShell as
-Administrator using the same Windows account**:
+The **Pocket Media Manager** task starts immediately, then starts at your user
+logon with normal privileges and no terminal window. It runs in your desktop
+session so mpv can appear. The PC must stay signed in and awake. Open
+`http://localhost:8787/` on the PC or `http://<PC_LAN_IP>:8787/` on your phone.
+
+For first-time phone access or a changed port, run this once from **PowerShell
+as Administrator under the same Windows account**:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1 -ConfigureFirewall
 ```
 
-This allows the configured TCP port only from `LocalSubnet` on the **Private**
-firewall profile. Without `-ConfigureFirewall`, the installer leaves firewall
-rules untouched. The server always runs with limited privileges.
+This configures only the Private-network TCP rule for the local subnet.
+Ordinary installation leaves firewall rules unchanged.
 
-The **Pocket Media Manager** task starts when you sign in, under your account
-with limited privileges and no runtime limit, so mpv opens on your desktop.
-The PC must be signed in and awake. Open `http://localhost:8787/` on the PC, or
-`http://<PC_LAN_IP>:8787/` on your phone on the same network.
+After updating code or `.env`, double-click **`restart-server.cmd`**. Run
+`bootstrap-windows.ps1` first when requirements change. The restart script stops
+and waits for the exact scheduled task, starts it, checks readiness, and shows
+the result. It requests UAC only if Windows denies task access. Finish active
+operations first, then reload your browser and take control again.
 
-After editing `.env`, restart the scheduled task:
-
-```powershell
-Stop-ScheduledTask -TaskName "Pocket Media Manager"
-Start-ScheduledTask -TaskName "Pocket Media Manager"
-```
-
-To remove automatic startup from ordinary PowerShell:
+To remove startup:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\remove-startup-task.ps1
-# Optional, from elevated PowerShell: also remove this app's firewall rule.
+# Optional from elevated PowerShell: also remove this app's firewall rule.
 powershell -ExecutionPolicy Bypass -File .\scripts\remove-startup-task.ps1 -RemoveFirewall
 ```
 
-Removal leaves firewall rules in place unless `-RemoveFirewall` is supplied.
-Media, database, and feedback are retained. Foreground and development launchers
-use the same `.env` settings as the app; real environment variables take precedence.
-Stop the scheduled server before running a foreground or development instance.
+Removal retains media, database, and feedback. Foreground troubleshooting uses
+`scripts\run-server.ps1`; development uses `scripts\run-dev.ps1`, optionally
+with `-Reload`. Stop the scheduled server first. A lifetime guard rejects
+another server using the same media directory, including on a different port.
 
-## Everyday Use
+## Everyday use
 
-- **Recommend** chooses from the eligible library.
-- **Recommend with Selections** restricts that same engine to selected top-level
-  folders and their descendants. Your selections remain checked after feedback.
-- **Explore** browses the catalog and lets you pick a clip directly. Feedback
-  returns you to its folder. Blue folder cards with chevrons browse deeper;
-  clip cards have play icons. Favorites stand out in green, and Not for me
-  clips in red, with text badges as well as color. Choosing Not for me also
-  removes Favorite. All preference controls are
-  on the feedback page;
-  it offers restoration controls when Less often or Not for me is set. Use
-  No feedback when testing a file. There is no separate preferences or test page.
-- **Stream** browses the separate `_stream` folder. It records no encounters or
-  preference feedback and leaves you on the listing for the next episode.
-- **Address Other Feedback** resolves outstanding Remake/Fix/Trim/Hold tasks,
-  making those files eligible again.
-- **Refresh Library** discovers new files and checks for moves, edits, and
-  deletions. A full scan also runs at startup; everyday navigation and
-  recommendations use the stored catalog.
-- **Clean Up** removes selected unavailable database records and their history,
-  never media files. Records with outstanding maintenance tasks are protected.
-- **Reset Preferences** confirms before clearing Favorites, lasting preferences,
-  and encounters. It retains the catalog and Something Else tasks and saves a
-  database backup first.
+The first page takes control automatically. Other tabs and devices show
+**Take Control** and cannot browse or operate the app until you transfer
+control. **Release Control** frees it deliberately. There is no ownership
+polling or timeout. A refresh creates a new page and may require takeover.
+A previous page discovers a transfer on its next request; the server rejects
+its actions. Active saves and player launches finish before control transfers.
 
-Each browser remembers its player and folder selections; recommendation history,
-preferences, and cooldowns are shared across the entire app. **Too soon** pauses
-recommendations for 3 days (72 hours); **Not in the mood** pauses them for
-48 hours. Both run from the feedback time, leave lasting preferences unchanged,
-and still allow deliberate playback through Explore. There are no recommendation
-sessions, inactivity timeouts, or Start New Session controls.
+- **Recommend** chooses from the eligible library. **Recommend with Selections**
+  limits that same engine to selected folders and descendants.
+- **Explore** browses folders and deliberately opens a clip, including clips
+  temporarily excluded by a cooldown. Favorite clips stand out in green;
+  Not for me clips stand out in red, with text badges too.
+- **Stream** browses the separate `_stream` folder without recommendations or
+  feedback. Existing media playback continues when browser control transfers.
+- **Favorite** is a lasting preference independent of a response. **Enjoyed it**
+  reports enjoyment; **Too soon** pauses recommendations for 72 hours;
+  **Not in the mood** pauses them for 48 hours. **Less often** and **Not for me**
+  apply until restored. Not for me also removes Favorite. **No feedback** closes
+  a clip without rating it.
+- **Something Else** records Remake/Fix/Trim/Hold work and hides the clip until
+  resolved through **Address Other Feedback**.
+- **Refresh Library** checks additions, moves, edits, and deletions. Startup
+  also scans; ordinary browsing uses the stored catalog.
+- **Clean Up** deletes selected unavailable database records, never media files.
+  **Reset Preferences** clears preferences and encounters while retaining the
+  catalog and maintenance tasks. Both save a backup first.
 
-Only one clip can await feedback across the entire app. Until it is closed,
-every device returns to that feedback screen instead of Home, Explore, or other
-workflows. Choose a response, No feedback, or save Something Else to continue;
-Favorite alone does
-not close it. Any device can finish it, even after a restart or clearing cookies.
-Returning does not automatically reopen the player. Home no longer has an
-unfinished-feedback queue, and playback already underway remains uninterrupted.
-Opening a player is not counted as a completed viewing.
+Only one clip can await feedback. Taking control on another device resumes
+that same feedback without reopening the player. Finish it with a response,
+No feedback, or a saved Something Else task. Favorite alone leaves it open.
+Pending feedback, preferences, and cooldowns survive restarts. A browser cookie
+remembers only player and folder choices; it grants no control.
 
-## Fresh Start and Current Limits
+## Data, logs, and checks
 
-This version starts fresh: `_mpv_prefs.json` and `other_feedback.jsonl` are
-ignored and left untouched. There is no legacy import or recommendation profile
-selector. Renamed or adjusted media can become new records without inherited
-preferences.
+SQLite and the latest seven verified backup snapshots live inside
+`POCKET_MEDIA_MANAGER_MEDIA_ROOT\.pocket-media-manager`. Keep that directory
+with its journal files when backing up stopped app data. Your media stays in
+its existing folders. [Storage and restore details](docs/usage.md#storage-and-backups).
 
-The session-free database uses schema version 2. Older SQLite databases are not
-migrated. Before running this version against an existing library, stop the
-helper and rename `MEDIA_ROOT/.pocket-media-manager` to keep it aside, then
-restart. A fresh metadata folder is created with empty feedback and preferences;
-your media files are untouched. See [the usage guide](docs/usage.md) for details.
+Startup and runtime logs are in repository-level `logs\server.log`, rotated
+at 5 MiB with three previous files. `/health` reports readiness after the
+startup scan. [Design and configuration](docs/design.md) describes the code
+layout and operating conventions.
 
-The helper does not measure video completion or watch duration. VLC/mpv handle
-playback; the PC must be awake and reachable for phone streaming. Library changes
-appear after startup or Refresh Library. `.ts` is now included in the default
-extension list; existing `.env` extension overrides still need it added.
+Run the maintained tests from the repository root:
 
-For this personal app, validation remains ad-hoc rather than a maintained test
-suite. See [the usage guide](docs/usage.md) for storage details, backup
-and restore, API changes, and the checks to run after changes.
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m black --check pocket_media_manager scripts tests
+```
+
+Tests cover configuration, browser takeover and concurrent operations,
+request protections, durable feedback, snapshots, and streaming ranges/HEAD.
+JavaScript behavior checks use Node.js or macOS JavaScriptCore when available;
+PowerShell lifecycle checks use `powershell` or `pwsh` when available.
+Windows Task Scheduler, UAC/firewall behavior, and real VLC/mpv playback still
+need checks on the PC and phone. The app does not transcode or measure viewing
+completion. [Usage guide](docs/usage.md).

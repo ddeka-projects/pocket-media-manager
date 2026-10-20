@@ -6,3 +6,4 @@ __pycache__/
 _mpv_prefs.json
 .tmp/
 .pocket-media-manager/
+logs/

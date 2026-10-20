@@ -30,18 +30,17 @@ def compute_weight(media: dict[str, Any], now: datetime | None = None) -> float:
     return max(weight, 0.01)
 
 
-def pick_weighted(
-    media: list[dict[str, Any]], now: datetime | None = None
-) -> dict[str, Any]:
+def pick_weighted(media: list[dict[str, Any]], now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     eligible = [
-        item for item in media
+        item
+        for item in media
         if not item["not_for_me"]
         and elapsed_hours(item.get("last_too_soon_at"), now) >= TOO_SOON_HOURS
         and elapsed_hours(item.get("last_not_in_mood_at"), now) >= NOT_IN_MOOD_HOURS
     ]
     if not eligible:
         raise ValueError("No clips fit right now. Try Explore or wait for a cooldown to expire.")
-    return random.choices(
-        eligible, weights=[compute_weight(item, now) for item in eligible], k=1
-    )[0]
+    return random.choices(eligible, weights=[compute_weight(item, now) for item in eligible], k=1)[
+        0
+    ]

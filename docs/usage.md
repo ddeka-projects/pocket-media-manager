@@ -1,92 +1,7 @@
 # Pocket Media Manager usage guide
 
-The helper runs on the Windows PC holding your media. It provides a phone/PC
-browser interface, one recommendation engine, VLC phone streaming, mpv desktop
-playback, and feedback for revisiting favorite moments.
-
-## Setup and Windows Startup
-
-Use Windows PowerShell 5.1+ and Python 3.11 or newer. From ordinary PowerShell in the repository root:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-windows.ps1
-```
-
-The script creates `.venv`, installs dependencies, and copies `.env.example` to
-`.env` if needed. Edit `.env`:
-
-```text
-MEDIA_ROOT=E:\Hobby Disk
-PUBLIC_BASE_URL=http://192.168.1.50:8787
-SERVER_HOST=0.0.0.0
-SERVER_PORT=8787
-STREAM_FOLDER=_stream
-SUPPORTED_EXTENSIONS=.mp4,.mkv,.mov,.avi,.webm,.ts
-MPV_PATH=mpv
-```
-
-`MEDIA_ROOT` must be an existing accessible directory. Relative paths are
-resolved against the repository root. The helper does not create a missing media root:
-that could hide a typo or a disconnected drive. `STREAM_FOLDER` must be inside
-the media root and cannot be the metadata folder. Directory and file symlinks
-are omitted from catalog scans.
-
-Use the PC's LAN address for `PUBLIC_BASE_URL`, not `localhost`. Find it with
-`ipconfig`. Choose VLC or mpv on the home page; each browser remembers that
-choice. Set `MPV_PATH` to the executable's full path if mpv is not on PATH.
-
-For everyday use, run from ordinary PowerShell in the repository root:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1
-```
-
-For first-time phone access or after changing the port, run from **PowerShell as
-Administrator using the same Windows account**:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1 -ConfigureFirewall
-```
-
-This allows the configured TCP port only from `LocalSubnet` on the **Private**
-firewall profile. Without `-ConfigureFirewall`, the installer leaves firewall
-rules untouched. The server always runs with limited privileges.
-
-The **Pocket Media Manager** scheduled task starts at your user logon and runs
-in your desktop session with limited privileges, so mpv is visible. It has no
-runtime limit. The PC must remain signed in, awake, and reachable.
-After changing `.env`, restart it:
-
-```powershell
-Stop-ScheduledTask -TaskName "Pocket Media Manager"
-Start-ScheduledTask -TaskName "Pocket Media Manager"
-```
-
-For development, stop/remove the always-on task before starting a foreground server.
-Removal keeps the firewall rule unless `-RemoveFirewall` is supplied:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\remove-startup-task.ps1
-# Optional, from elevated PowerShell: also remove this app's firewall rule.
-powershell -ExecutionPolicy Bypass -File .\scripts\remove-startup-task.ps1 -RemoveFirewall
-```
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1
-# Optional Python-code reload while developing:
-powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1 -Reload
-```
-
-The normal server can also be run manually:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-server.ps1
-```
-
-Open `http://localhost:8787/` on the PC or `http://<PC_LAN_IP>:8787/` on your
-phone. If `/health` is unreachable, check the private-network Windows Firewall
-rule (`-ConfigureFirewall`) and that both devices are on the same network. This is
-a private-home-network app; do not expose it to the public internet.
+See [Windows setup and everyday commands](../README.md#windows-setup) first.
+Configuration names and code responsibilities are in [design.md](design.md).
 
 ## Watching and Giving Feedback
 
@@ -109,7 +24,7 @@ There is no separate Clip Preferences screen or Test Playback mode. If you are
 testing a file, open it normally and choose No feedback. That records the offer
 but adds no enjoyment or negative rating; the usual brief repeat penalty applies.
 
-**Stream** browses `MEDIA_ROOT\STREAM_FOLDER` directly. Files there are outside
+**Stream** browses the configured media root / Stream folder directly. Files there are outside
 the recommendation catalog and encounter history. Opening a file leaves the
 browser on its listing so you can return for the next episode. Like other app
 workflows, starting a new Stream playback is unavailable while a library clip
@@ -174,199 +89,148 @@ If nothing is currently eligible, the app explains why; it does not quietly
 override your responses. You can manually choose a clip through Explore,
 restore its preferences, or wait for a cooldown to expire.
 
-## Encounters, Shared State, and Restarts
+## Browser control and pending feedback
 
-An encounter is created before opening the player. It records the file,
-selection time, source, player, selected folders, return page,
-playback request/failure, and eventually feedback. Launching mpv or sending a
-VLC link does not prove the video was watched or completed. Watch duration and
-completion are not measured.
+One live page controls the whole app, including browsing. The first page claims
+control automatically if nobody holds it; another tab or device shows **Take
+Control**. Taking control immediately revokes the previous grant after any
+already-authorized save or player launch finishes. The old page can remain
+visible until its next request, but its operations are rejected. **Release
+Control** gives up the grant deliberately.
 
-Feedback forms carry the encounter ID. Repeating the same response is safe;
-submitting a different response to a closed encounter is rejected. The app
-allows only **one open encounter across all devices and tabs**. Opening Home,
-Explore, Selections, Stream, or a maintenance screen while it is open returns
-you directly to that feedback screen. There is no Resume Feedback banner or
-unfinished-feedback list on Home.
+Ownership has no heartbeat, inactivity timeout, or background polling. Closing
+a tab may leave its grant held; use Take Control elsewhere. Refreshing creates
+a new page identity and may require takeover. The grant lives only in the
+current document's memory, so browser cookies and duplicated tabs cannot share
+control. Browser navigation inside the app retains that document and grant.
+Restarting the server clears ownership and temporary playback links.
 
-Any device can close the shared encounter with an ordinary response,
-**No feedback**, or a saved **Something Else** task. Favorite and restoration
-controls save without closing it; cancelling Something Else also leaves it
-open. Clearing cookies or restarting the helper does not bypass the requirement.
-A failed player launch still needs closure; use No feedback if you do not want
-to rate it. Returning to feedback never
-automatically relaunches playback. **Open Player** uses the originally selected
-player, shown on its button, even if you resume from another device.
+An encounter is created before opening a player. It records the file, selection
+time, source, player, selected folders, return page, playback outcome, and
+feedback. Launching VLC/mpv is not counted as a completed viewing.
 
-The check and each state-changing operation use the same SQLite write
-transaction, so simultaneous recommendation requests cannot create two open
-encounters. Closing feedback and launching its player are also serialized.
-The first response wins; identical retries are safe, while conflicting or stale
-changes are rejected. There is no device ownership, lease, heartbeat, automatic
-expiry, or takeover step. Nothing polls in the background: another open tab
-encounters the restriction on its next request. Cached browser history pages
-reload when restored; the backend enforces the rule regardless of the page
-being displayed. Existing media streams, health checks, and static icons remain
-available without taking the feedback gate.
+Only one encounter can remain open. The controlling page returns to that
+feedback screen instead of Home, Explore, Stream, or maintenance workflows.
+Taking control elsewhere resumes the same encounter without reopening playback.
+A response, No feedback, or a saved Something Else task closes it; Favorite and
+restoration controls save without closing it. Cancelling Something Else leaves
+it open. A failed launch still needs closure; No feedback is fine. Open Player
+uses the encounter's original player.
 
-A persistent browser cookie remembers only UI choices: player and folder
-selections. Recommendation history, positive-interest signals, preferences,
-cooldowns, and the last encounter are shared across devices. There are no
-recommendation sessions, activity timestamps, inactivity timeouts, or Start New
-Session controls. Restarting the helper or changing browsers does not reset a
-cooldown; its deadline comes from the saved feedback timestamp.
+Pending feedback, favorites, maintenance tasks, and cooldowns live in SQLite
+and survive takeover, cleared cookies, and server restarts. A cookie remembers
+only player and folder selections. Feedback submissions include the encounter
+ID: identical retries are safe, while a different response to an already-closed
+encounter is rejected. Database transactions prevent competing requests from
+creating two open encounters. Existing VLC streams can keep serving bytes
+without browser ownership until their link expires or the server restarts.
 
-Clearing cookies gives you fresh player/folder choices, but the pending
-encounter remains visible and closable everywhere. Late feedback stays attached
-to its encounter, and cooldowns begin when that feedback is submitted, not when
-the player opened. This is a single-user, trusted-LAN application, not a
-multi-user privacy or authorization boundary.
+## Catalog and maintenance
 
-## Catalog and Maintenance
+A full scan runs at startup and through Refresh Library. Ordinary browsing and
+recommendations use the stored catalog. There is no continuous file watcher.
+Metadata and Stream folders and symlinks are excluded from recommendations.
+Failed or partial scans preserve the previous catalog rather than marking
+unreadable files missing.
 
-A complete catalog scan runs at startup. Ordinary Recommend, Selections,
-feedback, and Explore operations use SQLite rather than rescanning the media
-tree or rewriting JSON documents. Use **Refresh Library** after adding,
-moving, editing, or deleting files. Refresh is a full scan and can take time on
-a large disk. There is no continuous filesystem watcher.
+Before playback, a file is checked again. A modified file's old record becomes
+unavailable; Refresh Library creates a replacement with fresh preferences.
+Renaming or moving a file also creates a fresh record. An unchanged file
+returning at the same path can reuse its previous record.
 
-`available` means the last successful check found that file. It is separate from
-Favorite, disinterest, or maintenance blocks. Before playback, the chosen file
-is checked again. A changed file's old record is made unavailable; Refresh
-Library creates the replacement record with fresh preferences. Moving or
-renaming a file also starts a fresh record. An unchanged file returning to the
-same path can reuse its existing record. Failed or partial scans preserve the
-previous catalog instead of marking everything missing.
+Address Other Feedback groups Remake/Fix/Trim/Hold tasks. Marking them addressed
+makes those files eligible again. Clean Up removes selected unavailable records
+and encounters, never media files, and protects unresolved maintenance tasks.
+Reset Preferences clears Favorites, Less often, Not for me, and encounters
+(including cooldowns). It retains the catalog, browser choices, and maintenance
+tasks. Both cleanup and reset save a database backup before changing data.
 
-**Address Other Feedback** groups outstanding tasks by Remake/Fix/Trim/Hold.
-Checking items and saving marks them resolved. Reopen the file through Explore
-after resolving its task; choose No feedback if you only want to check playback.
+## Storage and backups
 
-**Clean Up** removes only selected unavailable records and their encounters,
-never media files. Records with unresolved tasks are withheld from cleanup.
-**Reset Preferences** confirms before clearing all Favorites, Less often,
-Not for me, and encounters (including feedback cooldowns) across the app. The
-catalog, player/selections, and Something Else tasks remain. Both operations
-save a database backup first.
-
-## Storage and Backups
-
-All generated app metadata is in:
+Generated metadata stays in:
 
 ```text
-MEDIA_ROOT\.pocket-media-manager\
+<media root>\.pocket-media-manager\
   pocket-media.sqlite3
   backups\
-  logs\
 ```
 
-SQLite manages its journal/WAL companion files alongside the database. The
-metadata folder is excluded from all media browsing and catalog scans. No
-separate database server is needed. Four application tables are used:
+SQLite manages journal/WAL files alongside the database. Its schema version is
+2; unsupported versions and damaged databases produce errors rather than an
+empty replacement. Media files are never modified by this app. Old JSON
+preference files, if present, are left untouched.
 
 | Table | Stored data |
 | --- | --- |
-| `media` | Relative path, file size, precise modification timestamp, discovery time, availability, Favorite, Less often, Not for me. |
-| `encounters` | Media record, selection and playback-request timestamps, source/context, launch outcome/error, one response, resolution, close time. No browser or session ownership. |
-| `other_feedback` | Media record, task type, creation time, resolution time. |
-| `settings` | Per-browser player/folder selections, catalog refresh and backup bookkeeping. |
+| `media` | Relative path, size, precise modification time, availability, and lasting preferences. |
+| `encounters` | Selection/context, player launch outcome, feedback and closure timestamps. |
+| `other_feedback` | Remake/Fix/Trim/Hold work and resolution time. |
+| `settings` | Browser choices and scan/backup bookkeeping. |
 
-Times are stored in UTC and displayed in the browser's local timezone. File
-modification is stored as nanoseconds (`modified_ns`) to detect in-place edits.
-There are no separate preference, score, summary, or feedback JSON files.
-Cooldowns are derived from the latest corresponding feedback timestamps, not
-stored in extra tables or timer files.
+Times are stored in UTC and displayed in the browser's timezone. Cooldowns are
+derived from saved feedback timestamps; no timer files or extra sessions are
+needed. Playback tokens and browser ownership are temporary process memory.
 
-This version starts fresh. Existing `_mpv_prefs.json` and `other_feedback.jsonl`
-files are ignored and left untouched. They are not imported or updated.
+Backups use SQLite's backup API, run an integrity check, and atomically publish
+the finished snapshot. Checks run at startup and hourly with at most one
+automatic snapshot per UTC day. The latest seven generated snapshots are kept,
+including snapshots saved before cleanup/reset. Failed snapshots are not
+published or marked complete.
 
-The session-free SQLite schema is version 2. There is no compatibility layer
-for older databases. When updating from a version that stored sessions, stop
-the helper first and rename the entire `MEDIA_ROOT\.pocket-media-manager`
-folder, for example to `.pocket-media-manager.previous`. Keep it together so its
-database, any WAL companion files, and backups stay intact. Restarting creates
-a new metadata folder and scans the library. Feedback, Favorites, and other app
-metadata start empty; media files are never removed or modified. An older
-database left in place produces a clear startup error instead of being
-overwritten. Restore instructions below apply to backups from this schema;
-older-schema backups are not imported.
+To restore, stop the task first. Preserve the entire current metadata directory
+under another name, including any WAL files. Create a fresh
+`.pocket-media-manager` folder and copy a verified backup there as
+`pocket-media.sqlite3`. Start the task; it recreates the backups directory and
+refreshes the catalog. Keep the preserved directory until you verify recovery.
 
-SQLite changes are transactional. A damaged database is reported rather than
-silently replaced with an empty one. Automatic snapshot backups are checked at
-startup and hourly while running, with at most one automatic backup per UTC day.
-The latest seven helper-generated backups are kept, including backups made
-before reset/cleanup. Snapshots use SQLite's backup API, not a live file copy.
+Application logs are separate: repository `logs/server.log`, with a 5 MiB
+limit and three rotated copies. They include startup failures and player-launch
+errors. The media directory is the data to preserve when replacing a checkout.
 
-To restore, stop the helper first. Preserve the current metadata folder under
-a different name, create a fresh `.pocket-media-manager` folder, and copy the
-chosen backup into it as `pocket-media.sqlite3`. Restart the helper; it recreates
-logs/backups and refreshes the catalog. Keeping the preserved folder also keeps
-the original database and any WAL companion files together for recovery.
+## API
 
-Logs are in `logs/helper.log` (rotated at 1 MB with two old files) and, when
-using the PowerShell launcher, `logs/server.log` (current server transcript,
-overwritten on restart).
+The browser handles this automatically. Other clients must first send
+`POST /api/controller/claim` with JSON `{"page_id":"unique-page-id"}` and the
+server's exact `Origin` header. If occupied, explicitly call
+`POST /api/controller/takeover` with the same body. Include `X-Page-Id` and
+`X-Controller-Token` (the returned `token`) on all normal app requests. Release
+with `POST /api/controller/release` and JSON `{"page_id":"...","token":"..."}`.
+Use a cookie jar only to retain player/folder choices. Every mutation requires
+the same-origin `Origin` header; GET requests do not select or launch clips.
 
-## API and Shortcuts
+JSON errors have the shape
+`{"ok":false,"error":{"code":"...","message":"..."}}`. Ownership rejection
+uses `controller_occupied`, `controller_required`, or `controller_transferred`.
+An open encounter blocks unrelated operations with HTTP 409 and
+`error.code=feedback_required`, `error.encounter_id`, and `error.feedback_page`.
+HTML navigation goes to its feedback screen. Responses containing app state
+are not cached. Health, icons, browser assets, and existing playback links are
+available without ownership.
 
-The API has changed with this fresh start. Keep a cookie jar to retain this
-browser's player and folder selections. Feedback is shared across browsers and
-requires `encounter_id`, not the originating cookie. Old like/dislike/pending/skip
-shortcuts need updating.
-
-While an encounter is open, requests outside its feedback workflow receive
-HTTP **409** for JSON clients, with `code=feedback_required`, `encounter_id`,
-and `feedback_page`. This includes `/next`, new playback, settings,
-refresh, reset, and cleanup. HTML navigation redirects to the feedback page
-instead. `/last`, feedback controls, and existing media-byte requests remain
-available. State-dependent app responses are not cached.
-
-- `GET /health`: readiness check.
-- `GET /next?player=vlc` or `?player=mpv`: choose a recommendation, create an
-  encounter, and request playback. Player is optional and otherwise remembered.
-  Returns `encounter_id`, `player`, `file_name`, `player_url`/`stream_url` for
-  VLC or `launched` for mpv, feedback URLs, and the persistent feedback page.
-  A failed request includes `launch_error`; its encounter remains resumable.
-- `POST /feedback/{response}` with `encounter_id`: `enjoyed`, `too_soon`,
+- `GET /health`: readiness after startup completes, including app and process-instance identifiers.
+- `POST /next`, optional form `player=vlc` or `player=mpv`: recommend, create an
+  encounter, and request playback. Returns encounter ID, launch outcome,
+  streaming/player URLs where relevant, and feedback URLs.
+- `POST /feedback/{response}`, form `encounter_id`: `enjoyed`, `too_soon`,
   `not_in_mood`, `less_often`, `not_for_me`, or `no_feedback`.
-- `POST /feedback/favorite` with `encounter_id` and `favorite=true/false`.
-- `POST /feedback/restore` with `encounter_id` and `preference=less_often` or
-  `preference=not_for_me`: clear that lasting preference without closing feedback.
-- `POST /feedback/other/save` with `encounter_id` and `feedback_type`:
-  `remake`, `fix`, `trim`, or `hold`.
-- `GET /feedback/{encounter_id}`: view shared feedback without relaunching.
-- `GET /last`: the shared pending encounter and current media preferences, or
-  the app's last encounter when no feedback is pending.
-- `POST /library/refresh`: refresh the catalog; JSON clients receive media count.
-- `GET /stream/{token}`: serve a temporary playback link. The latest 30 links
-  are retained in memory and expire on helper restart; resumed feedback can
-  request a new link through Open Player.
+- `POST /feedback/favorite`, forms `encounter_id`, `favorite=true/false`.
+- `POST /feedback/restore`, forms `encounter_id`,
+  `preference=less_often` or `preference=not_for_me`.
+- `POST /feedback/other/save`, forms `encounter_id`,
+  `feedback_type=remake`, `fix`, `trim`, or `hold`.
+- `GET /feedback/{encounter_id}`: feedback without automatic replay.
+- `GET /last`: pending encounter or latest closed encounter and media preferences.
+- `POST /library/refresh`: scan the catalog; JSON returns the media count.
+- `GET /stream/{token}` and `HEAD`: media bytes, including range requests. The
+  latest 30 links stay in memory until replaced or the server restarts. Open
+  Player can create a new link for a pending encounter.
 
-## Validation and Limits
+## Validation and limits
 
-Validation remains ad-hoc, without a maintained test suite. After changes,
-exercise Recommend, selected folders, Explore, both players, and Stream. Check
-that Favorite survives No feedback, each response is attached to its encounter,
-and unresolved tasks hide clips until addressed. Open a clip in one browser and
-confirm another device is sent to the same feedback; verify that No feedback
-from either device unlocks both. Check simultaneous recommendations create
-only one open encounter, stale/conflicting feedback cannot overwrite a response,
-and Favorite or Something Else Cancel leaves the gate closed. Restart with an
-open encounter, clear cookies, and verify it still blocks new activity without
-relaunching the player. Check existing stream ranges/HEAD still work. Verify
-Refresh Library discovers additions and marks deletions, and that metadata and
-Stream files never enter recommendations.
-
-Check Too soon excludes a clip for exactly 72 hours and Not in the mood for
-exactly 48 hours from feedback, including across browsers and helper restarts.
-Confirm expiry does not change Favorite, Less often, or Not for me, and Explore
-can open temporarily excluded clips. Verify no Start New Session control or
-session fields are present, `/last` is shared after closure, and Enjoyed it and
-other weight calculations remain unchanged.
-
-Actual VLC playback and Windows mpv launching need a device/PC check. The helper
-does not transcode files; codec support belongs to the player. `.ts` is in the
-default extension list, but an existing `SUPPORTED_EXTENSIONS` override needs
-`.ts` added explicitly. There is no automatic clip matching, legacy migration,
-profile selector, separate preference/test screen, watch-completion tracking,
-or continuously refreshed catalog.
+Run the maintained tests described in the README. On Windows, verify quiet
+logon startup, foreground shutdown, duplicate-server rejection, UAC only when
+needed, task stop/start, and the root restart command. On phone and desktop,
+check Take Control, reload/takeover, back/forward navigation, pending feedback,
+selected folders, Explore, and Stream. Verify real VLC/mpv playback and iPhone
+return from the player. Codec support belongs to the player; there is no
+transcoding or completion tracking.

@@ -1,42 +1,25 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param()
-
-Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent $PSScriptRoot
-$Python = Join-Path $Root ".venv\Scripts\python.exe"
-
-function Invoke-Checked {
-    param([string]$FilePath, [string[]]$Arguments)
-    $previousPreference = $ErrorActionPreference
-    try {
-        # pip may write ordinary warnings to stderr in Windows PowerShell 5.1.
-        $ErrorActionPreference = "Continue"
-        & $FilePath @Arguments
-    }
-    finally {
-        $ErrorActionPreference = $previousPreference
-    }
-    if ($LASTEXITCODE -ne 0) { throw "Command failed with exit code ${LASTEXITCODE}: $FilePath" }
-}
-
-if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
-    $launcher = Get-Command "py.exe" -ErrorAction SilentlyContinue
+. (Join-Path $PSScriptRoot "windows-common.ps1")
+$python = Join-Path $PocketRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+    $launcher = Get-Command "py.exe" -CommandType Application -ErrorAction SilentlyContinue
     if ($null -ne $launcher) {
-        Invoke-Checked $launcher.Source @("-3", "-m", "venv", (Join-Path $Root ".venv"))
+        Invoke-PocketChecked $launcher.Source @("-3", "-m", "venv", (Join-Path $PocketRoot ".venv"))
     }
     else {
-        $launcher = Get-Command "python.exe" -ErrorAction SilentlyContinue
-        if ($null -eq $launcher) { throw "Install Python 3.11 or newer (python.org), then run this script again." }
-        Invoke-Checked $launcher.Source @("-m", "venv", (Join-Path $Root ".venv"))
+        $launcher = Get-Command "python.exe" -CommandType Application -ErrorAction SilentlyContinue
+        if ($null -eq $launcher) { throw "Install Python 3.11 or newer, then run this script again." }
+        Invoke-PocketChecked $launcher.Source @("-m", "venv", (Join-Path $PocketRoot ".venv"))
     }
 }
-Invoke-Checked $Python @("-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 'Python 3.11 or newer is required.')")
-Invoke-Checked $Python @("-m", "pip", "install", "--disable-pip-version-check", "-r", (Join-Path $Root "requirements.txt"))
-$environmentFile = Join-Path $Root ".env"
+Invoke-PocketChecked $python @("-c", "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 'Python 3.11 or newer is required.')")
+Invoke-PocketChecked $python @("-m", "pip", "install", "--disable-pip-version-check", "-r", (Join-Path $PocketRoot "requirements.txt"))
+$environmentFile = Join-Path $PocketRoot ".env"
 if (-not (Test-Path -LiteralPath $environmentFile)) {
-    Copy-Item -LiteralPath (Join-Path $Root ".env.example") -Destination $environmentFile
-    Write-Host "Created .env. Set MEDIA_ROOT and PUBLIC_BASE_URL before starting." -ForegroundColor Yellow
+    Copy-Item -LiteralPath (Join-Path $PocketRoot ".env.example") -Destination $environmentFile
+    Write-Host "Created .env. Review its paths and settings before starting."
 }
-Write-Host "Ready. Configuration: $environmentFile" -ForegroundColor Green
+else { Write-Host "Kept the existing .env file." }
+Write-Host "Bootstrap complete: $PocketRoot"
