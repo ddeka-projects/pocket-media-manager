@@ -539,7 +539,8 @@ class Database:
                             raise sqlite3.DatabaseError(
                                 "The database snapshot failed its integrity check"
                             )
-                    with temporary.open("rb") as snapshot:
+                    # Windows only flushes handles opened for writing; "rb" fails with EBADF.
+                    with temporary.open("r+b") as snapshot:
                         os.fsync(snapshot.fileno())
                     os.replace(temporary, target)
                 finally:

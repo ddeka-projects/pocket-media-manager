@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import errno
+import os
 import sqlite3
 import threading
 import time
@@ -256,6 +258,24 @@ class AppTests(unittest.TestCase):
                     snapshot.execute("SELECT feedback FROM encounters").fetchone()[0], "enjoyed"
                 )
             self.assertFalse(list(backup.parent.glob("*.tmp")))
+
+    @unittest.skipIf(os.name == "nt", "Windows enforces this natively")
+    def test_backup_flushes_snapshot_through_a_writable_handle(self):
+        import fcntl
+
+        # Emulate Windows, where fsync on a read-only handle fails with EBADF.
+        real_fsync = os.fsync
+
+        def windows_fsync(descriptor):
+            if fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY:
+                raise OSError(errno.EBADF, "Bad file descriptor")
+            real_fsync(descriptor)
+
+        database = Database(self.settings)
+        database.initialize()
+        with patch("pocket_media_manager.storage.os.fsync", side_effect=windows_fsync):
+            backup = database.backup()
+        self.assertTrue(backup.is_file())
 
     def test_simultaneous_database_encounters_have_one_winner(self):
         database = Database(self.settings)
