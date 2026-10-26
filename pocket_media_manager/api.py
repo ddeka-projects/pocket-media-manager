@@ -64,7 +64,8 @@ def web_manifest() -> dict:
         "short_name": "Pocket Media",
         "start_url": "/",
         "display": "standalone",
-        "theme_color": "#f7f7f4",
+        "theme_color": "#0e1013",
+        "background_color": "#0e1013",
         "icons": [{"src": "/pocket-manager-icon.png", "sizes": "128x128", "type": "image/png"}],
     }
 

@@ -18,8 +18,8 @@ icon and a chevron; media cards have a play icon. Stream uses the same cards.
 Inside a folder, the title is the folder's name and a grey trail beneath it
 (for example Explore › Anime) links back to each level above. The library and
 Stream folder locations are listed at the bottom of Home, under Maintenance.
-Favorites use a light green background and border, while
-Not for me clips use light red. Dark filenames remain readable, and text badges
+Favorites use a green-tinted card with a green edge, while
+Not for me clips use red. Filenames stay readable on both, and text badges
 identify each preference without relying on color. Choosing Not for me removes
 Favorite automatically, so the clip switches from green to red with only the
 Not for me badge. Not for me clips can still be opened manually.

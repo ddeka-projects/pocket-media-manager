@@ -18,7 +18,7 @@ def _page(title: str, body: str, status_code: int = 200) -> HTMLResponse:
 <link rel="apple-touch-icon" href="/pocket-manager-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="apple-mobile-web-app-title" content="Pocket Media Manager">
-<meta name="theme-color" content="#f7f7f4">
+<meta name="theme-color" content="#0e1013">
 <link rel="stylesheet" href="/static/styles.css"></head><body><main>{body}</main>
 <script src="/static/app.js" defer></script></body></html>""",
         status_code=status_code,
