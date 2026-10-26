@@ -52,27 +52,6 @@ async function checks() {
   await client.navigate("/explore");
   assert(client.readState().token === null && mainText().includes("Take Control"), "A server ownership rejection blocks the entire app");
 
-  transport = grantTransport("stale-release-token");
-  await client.takeControl(true);
-  transport = async () => jsonReply({ error: { code: "controller_transferred", message: "Use the other page" } }, 423);
-  await click(button("releaseControl"));
-  assert(client.readState().token === null && mainText().includes("Take Control"), "A rejected stale release also switches to the ownership gate");
-
-  transport = grantTransport("release-token");
-  await client.takeControl(true);
-  let completeRelease;
-  transport = () => new Promise((resolve) => { completeRelease = resolve; });
-  const beforeRelease = calls.length;
-  const releasing = click(button("releaseControl"));
-  assert(client.readState().busy, "Release holds the operation gate until confirmed");
-  await client.takeControl(true);
-  await client.navigate("/explore");
-  await click(button("player", "mpv"));
-  assert(calls.length === beforeRelease + 1, "A pending release blocks navigation, a new grant, and player changes");
-  completeRelease(jsonReply({ ok: true }));
-  await releasing;
-  assert(!client.readState().busy && client.readState().token === null && mainText().includes("Control released"), "Confirmed release returns to the explicit-control gate");
-
   transport = grantTransport("play-token");
   await client.takeControl(true);
   let completePlayer;

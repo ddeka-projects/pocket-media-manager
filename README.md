@@ -70,8 +70,9 @@ another server using the same media directory, including on a different port.
 
 The first page takes control automatically. Other tabs and devices show
 **Take Control** and cannot browse or operate the app until you transfer
-control. **Release Control** frees it deliberately. There is no ownership
-polling or timeout. A refresh creates a new page and may require takeover.
+control. There is no manual release button; closing the Home Screen app keeps
+control, and the next page simply takes it. There is no ownership polling or
+timeout. A refresh creates a new page and may require takeover.
 A previous page discovers a transfer on its next request; the server rejects
 its actions. Active saves and player launches finish before control transfers.
 

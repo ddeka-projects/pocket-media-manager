@@ -88,15 +88,6 @@
     });
     const feedback = document.querySelector("[data-feedback-path]");
     if (feedback) history.replaceState(null, "", feedback.dataset.feedbackPath);
-    const controls = document.createElement("div");
-    controls.className = "controller-controls";
-    const release = document.createElement("button");
-    release.type = "button";
-    release.className = "secondary";
-    release.dataset.releaseControl = "true";
-    release.textContent = "Release Control";
-    controls.append(release);
-    main().append(controls);
     const player = document.querySelector("[data-player-url]");
     const epoch = ownershipEpoch;
     if (player) window.setTimeout(() => {
@@ -165,27 +156,6 @@
     const button = event.target.closest("button");
     if (button?.hasAttribute("data-take-control")) {
       await takeControl(true);
-      return;
-    }
-    if (button?.hasAttribute("data-release-control")) {
-      if (busy || !token) return;
-      busy = true;
-      const epoch = ownershipEpoch;
-      try {
-        const response = await shellFetch("/api/controller/release", {
-          method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({page_id: pageId, token})
-        });
-        const payload = await response.json();
-        requireCurrentOwner(epoch);
-        if (!response.ok && isOwnershipFailure(payload)) {
-          waiting(payload.error.message);
-          return;
-        }
-        if (!response.ok) throw new Error(payload.error?.message || "Could not release control.");
-        waiting("Control released. Take Control when you want to continue.");
-      } catch (error) {
-        if (!(error instanceof OwnershipChangedError)) window.alert(error.message);
-      } finally { busy = false; }
       return;
     }
     if (button?.hasAttribute("data-select")) {
