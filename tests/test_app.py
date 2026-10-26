@@ -266,6 +266,29 @@ class AppTests(unittest.TestCase):
         self.assertIn('<button class="primary" form="cleanup-form">', page)
         self.assertNotIn("series/season", page)
 
+    def test_folder_pages_show_title_and_tappable_trail_instead_of_paths(self):
+        (self.root / "series" / "season").mkdir(parents=True)
+        (self.root / "series" / "season" / "episode.mp4").write_bytes(b"episode")
+        with self.client() as client:
+            owner = self.claim(client)
+            top = client.get("/explore", headers=owner).text
+            inner = client.get("/explore?path=series/season", headers=owner).text
+            stream = client.get("/stream", headers=owner).text
+        self.assertIn("<h1>Explore</h1>", top)
+        self.assertNotIn('class="crumbs"', top)
+        self.assertIn("<h1>season</h1>", inner)
+        self.assertIn('<a href="/explore">Explore</a>', inner)
+        self.assertIn('<a href="/explore?path=series">series</a>', inner)
+        self.assertNotIn('href="/explore?path=series%2Fseason"', inner)
+        for page in (top, inner, stream):
+            self.assertNotIn(str(self.root.resolve()), page)
+
+    def test_home_lists_library_and_stream_locations(self):
+        with self.client() as client:
+            page = client.get("/", headers=self.claim(client)).text
+        self.assertIn(f"<dt>Library</dt><dd>{self.root.resolve()}</dd>", page)
+        self.assertIn(f"<dt>Stream</dt><dd>{self.root.resolve() / '_stream'}</dd>", page)
+
     def test_backup_is_valid_and_restore_preserves_feedback(self):
         with self.client() as client:
             database = client.app.state.database

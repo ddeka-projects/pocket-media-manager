@@ -25,6 +25,7 @@ from .presentation import (
     _page,
     _form,
     _link,
+    _folder_header,
     _media_label,
     _select_all_row,
     _feedback_page,
@@ -101,7 +102,10 @@ def home(request: Request):
     ):
         body += _link(url, label, "compact")
     body += _form("/library/refresh", "Refresh Library", kind="compact")
-    body += "</div>"
+    settings = _settings(request)
+    body += f"""</div><dl class="locations">
+<dt>Library</dt><dd>{escape(str(settings.media_root))}</dd>
+<dt>Stream</dt><dd>{escape(str(settings.media_root / settings.stream_folder))}</dd></dl>"""
     return _page("Pocket Media Manager", body)
 
 
@@ -194,16 +198,12 @@ def explore(request: Request, path: str | None = None):
             folders.add(remainder.split("/", 1)[0])
         else:
             files.append(row)
-    body = '<h1>Explore</h1><div class="toolbar">'
+    body = _folder_header("explore", "Explore", relative) + '<div class="toolbar">'
     if relative:
         parent = relative.rsplit("/", 1)[0] if "/" in relative else ""
         body += _link(_browse_url("explore", parent), "‹ Back", "pill")
     body += _link("/", "Home", "pill")
-    body += (
-        '</div><p><span class="tag">'
-        + escape(relative or str(_settings(request).media_root))
-        + "</span></p>"
-    )
+    body += "</div>"
     if folders:
         cards = [
             _explore_folder(folder, prefix + folder) for folder in sorted(folders, key=str.lower)
@@ -233,16 +233,12 @@ def stream_browse(request: Request, path: str | None = None):
     relative = _relative_folder(request, path, stream=True)
     root = (_settings(request).media_root / _settings(request).stream_folder).resolve()
     current = root / relative
-    body = '<h1>Stream</h1><div class="toolbar">'
+    body = _folder_header("stream", "Stream", relative) + '<div class="toolbar">'
     if relative:
         parent = relative.rsplit("/", 1)[0] if "/" in relative else ""
         body += _link(_browse_url("stream", parent), "‹ Back", "pill")
     body += _link("/", "Home", "pill")
-    body += (
-        '</div><p><span class="tag">'
-        + escape(relative or str(root))
-        + '</span></p><p id="stream-status" aria-live="polite"></p>'
-    )
+    body += '</div><p id="stream-status" aria-live="polite"></p>'
     if current.is_dir():
         descendants = _stream_files(request, current)
         folders = sorted(

@@ -48,6 +48,23 @@ def _select_all_row() -> str:
     )
 
 
+def _folder_header(mode: str, title: str, relative: str) -> str:
+    """Large title for the current folder plus a tappable trail back to the top level."""
+    if not relative:
+        return f"<h1>{escape(title)}</h1>"
+    parts = relative.split("/")
+    trail = [(title, "")] + [(part, "/".join(parts[: i + 1])) for i, part in enumerate(parts[:-1])]
+    links = [
+        f'<a href="{escape(_browse_url(mode, path), quote=True)}">{escape(name)}</a>'
+        for name, path in trail
+    ]
+    separator = '<span class="crumb-sep" aria-hidden="true">›</span>'
+    return (
+        f"<h1>{escape(parts[-1])}</h1>"
+        f'<nav class="crumbs" aria-label="Folder path">{separator.join(links)}</nav>'
+    )
+
+
 def _media_label(relative_path: str) -> str:
     """Top-level folder as a tag, then the file name (file names are unique in the library)."""
     folder = relative_path.split("/", 1)[0] if "/" in relative_path else "Media root"
