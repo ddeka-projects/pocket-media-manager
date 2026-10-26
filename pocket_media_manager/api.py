@@ -400,18 +400,19 @@ def submit_feedback(request: Request, feedback: str, encounter_id: str = Form(..
 def cleanup_page(request: Request):
     rows = _db(request).media_rows(unavailable=True)
     body = "<h1>Clean Up</h1><p>Remove selected unavailable records and their encounter history. Media files are never deleted. Outstanding maintenance tasks are kept.</p>"
-    body += '<div class="toolbar">' + _link("/", "Cancel", "pill") + "</div>"
+    body += '<div class="toolbar">'
+    if rows:
+        body += '<button class="primary" form="cleanup-form">Clean Selected Records</button>'
+    body += _link("/", "Cancel", "pill") + "</div>"
     if rows:
         body += _select_all_row()
-    body += '<form method="post" action="/cleanup" class="stack">'
+    body += '<form id="cleanup-form" method="post" action="/cleanup" class="stack">'
     for row in rows:
         label = _media_label(row["relative_path"])
         body += f'<label class="check"><input type="checkbox" name="media_ids" value="{row["id"]}">{label}</label>'
-    body += (
-        '<button class="primary">Clean Selected Records</button></form>'
-        if rows
-        else "</form><p>No unavailable records. Refresh Library to check for deleted files.</p>"
-    )
+    body += "</form>"
+    if not rows:
+        body += "<p>No unavailable records. Refresh Library to check for deleted files.</p>"
     return _page("Clean Up", body)
 
 

@@ -263,6 +263,7 @@ class AppTests(unittest.TestCase):
             page = client.get("/cleanup", headers=self.claim(client)).text
         self.assertIn('<span class="tag">series</span> episode.mp4', page)
         self.assertIn('data-select="all"', page)
+        self.assertIn('<button class="primary" form="cleanup-form">', page)
         self.assertNotIn("series/season", page)
 
     def test_backup_is_valid_and_restore_preserves_feedback(self):
