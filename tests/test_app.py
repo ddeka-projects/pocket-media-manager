@@ -253,6 +253,17 @@ class AppTests(unittest.TestCase):
         self.assertIn("2 clips<", page)
         self.assertNotIn("_stream", page)
 
+    def test_cleanup_lists_folder_tag_and_file_name(self):
+        (self.root / "series" / "season").mkdir(parents=True)
+        gone = self.root / "series" / "season" / "episode.mp4"
+        gone.write_bytes(b"episode")
+        with self.client() as client:
+            gone.unlink()
+            client.app.state.database.refresh_catalog()
+            page = client.get("/cleanup", headers=self.claim(client)).text
+        self.assertIn('<span class="tag">series</span> episode.mp4', page)
+        self.assertNotIn("series/season", page)
+
     def test_backup_is_valid_and_restore_preserves_feedback(self):
         with self.client() as client:
             database = client.app.state.database

@@ -25,6 +25,7 @@ from .presentation import (
     _page,
     _form,
     _link,
+    _media_label,
     _feedback_page,
     _explore_section,
     _explore_folder,
@@ -369,9 +370,7 @@ def addressed_page(request: Request):
             continue
         body += f"<h2>{label}</h2>"
         for task in group:
-            path = task["relative_path"]
-            folder = path.split("/", 1)[0] if "/" in path else "Media root"
-            body += f'<label class="check"><input type="checkbox" name="task_ids" value="{task["id"]}"><span><span class="tag">{escape(folder)}</span> {escape(Path(path).name)}</span></label>'
+            body += f'<label class="check"><input type="checkbox" name="task_ids" value="{task["id"]}">{_media_label(task["relative_path"])}</label>'
     body += (
         '<button class="primary">Save Addressed Items</button></form>'
         if tasks
@@ -403,7 +402,8 @@ def cleanup_page(request: Request):
     body += '<div class="toolbar">' + _link("/", "Cancel", "pill") + "</div>"
     body += '<form method="post" action="/cleanup" class="stack">'
     for row in rows:
-        body += f'<label class="check"><input type="checkbox" name="media_ids" value="{row["id"]}">{escape(row["relative_path"])}</label>'
+        label = _media_label(row["relative_path"])
+        body += f'<label class="check"><input type="checkbox" name="media_ids" value="{row["id"]}">{label}</label>'
     body += (
         '<button class="primary">Clean Selected Records</button></form>'
         if rows

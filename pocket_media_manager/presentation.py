@@ -40,6 +40,14 @@ def _link(url: str, label: str, kind: str = "") -> str:
     return f'<a class="button {kind}" href="{escape(url, quote=True)}">{escape(label)}</a>'
 
 
+def _media_label(relative_path: str) -> str:
+    """Top-level folder as a tag, then the file name (file names are unique in the library)."""
+    folder = relative_path.split("/", 1)[0] if "/" in relative_path else "Media root"
+    return (
+        f'<span><span class="tag">{escape(folder)}</span> {escape(Path(relative_path).name)}</span>'
+    )
+
+
 def _error(request: Request, code: int, message: str, error_code: str | None = None):
     if _html(request):
         pending = getattr(request.state, "pending_encounter", None)
