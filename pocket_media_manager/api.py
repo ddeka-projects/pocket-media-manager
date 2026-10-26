@@ -26,6 +26,7 @@ from .presentation import (
     _form,
     _link,
     _media_label,
+    _select_all_row,
     _feedback_page,
     _explore_section,
     _explore_folder,
@@ -147,7 +148,7 @@ def select_folders(request: Request):
     body = '<h1>Recommend with Selections</h1><div class="toolbar">'
     body += '<button class="primary" form="selection-form">Recommend</button>'
     body += _link("/", "Home", "pill") + "</div>"
-    body += '<div class="row"><button class="compact" type="button" data-select="all">Select All</button><button class="compact" type="button" data-select="none">Deselect All</button></div>'
+    body += _select_all_row()
     body += '<form id="selection-form" method="post" action="/recommend/selected" class="stack">'
     for folder in folders:
         body += _select_folder(folder, clips[folder], folder in selected)
@@ -400,6 +401,8 @@ def cleanup_page(request: Request):
     rows = _db(request).media_rows(unavailable=True)
     body = "<h1>Clean Up</h1><p>Remove selected unavailable records and their encounter history. Media files are never deleted. Outstanding maintenance tasks are kept.</p>"
     body += '<div class="toolbar">' + _link("/", "Cancel", "pill") + "</div>"
+    if rows:
+        body += _select_all_row()
     body += '<form method="post" action="/cleanup" class="stack">'
     for row in rows:
         label = _media_label(row["relative_path"])

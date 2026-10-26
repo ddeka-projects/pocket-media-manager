@@ -40,6 +40,14 @@ def _link(url: str, label: str, kind: str = "") -> str:
     return f'<a class="button {kind}" href="{escape(url, quote=True)}">{escape(label)}</a>'
 
 
+def _select_all_row() -> str:
+    # app.js ticks or clears every checkbox on the page.
+    return (
+        '<div class="row"><button class="compact" type="button" data-select="all">Select All</button>'
+        '<button class="compact" type="button" data-select="none">Deselect All</button></div>'
+    )
+
+
 def _media_label(relative_path: str) -> str:
     """Top-level folder as a tag, then the file name (file names are unique in the library)."""
     folder = relative_path.split("/", 1)[0] if "/" in relative_path else "Media root"
