@@ -11,7 +11,8 @@ button,a.button {display:block;width:100%;box-sizing:border-box;border:1px solid
 button.secondary,a.secondary {background:white;color:#181818}
 button.danger {background:#9d2020;border-color:#9d2020}
 .check {display:flex;align-items:center;gap:.55rem;line-height:1.4}
-.tag {display:inline-block;border:1px solid #bcbcb5;border-radius:999px;padding:.08rem .45rem;font-size:.85rem}
+.tag {display:inline-block;border:1px solid #bcbcb5;border-radius:999px;padding:.08rem .45rem;font-size:.85rem;
+  overflow-wrap:anywhere}
 .notice {border:1px solid #bcbcb5;border-radius:6px;padding:.8rem;display:grid;gap:.6rem}
 .error {color:#9d2020} .player-toggle {display:flex;gap:.5rem}
 .player-toggle button {padding:.5rem} .player-toggle .active {background:#181818;color:white}

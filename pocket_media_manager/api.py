@@ -173,9 +173,9 @@ def explore(request: Request, path: str | None = None):
             _browse_url("explore", relative.rsplit("/", 1)[0] if "/" in relative else ""), "Back"
         )
     body += (
-        "</div><p>Browsing <em>"
+        '</div><p><span class="tag">'
         + escape(relative or str(_settings(request).media_root))
-        + "</em></p>"
+        + "</span></p>"
     )
     body += "<p>Open a folder to browse. Playing a clip opens your player and feedback.</p>"
     if folders:
@@ -216,9 +216,9 @@ def stream_browse(request: Request, path: str | None = None):
             _browse_url("stream", relative.rsplit("/", 1)[0] if "/" in relative else ""), "Back"
         )
     body += (
-        "</div><p>Browsing <em>"
+        '</div><p><span class="tag">'
         + escape(relative or str(root))
-        + '</em></p><p id="stream-status" aria-live="polite"></p><div class="stack">'
+        + '</span></p><p id="stream-status" aria-live="polite"></p><div class="stack">'
     )
     if current.is_dir():
         descendants = _stream_files(request, current)
