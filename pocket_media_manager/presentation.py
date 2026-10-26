@@ -107,12 +107,25 @@ def _feedback_page(request: Request, encounter: dict, launch: dict | None = None
     return _page("Feedback", body)
 
 
-def _explore_folder(name: str, path: str) -> str:
-    url = escape(_browse_url("explore", path), quote=True)
-    return f"""<a class="button explore-card explore-folder" href="{url}">
-<span class="explore-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"
+FOLDER_ICON = """<span class="explore-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"
 stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
-focusable="false"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9H3Z"/></svg></span>
+focusable="false"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9H3Z"/></svg></span>"""
+PLAY_ICON = """<span class="explore-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"
+focusable="false"><path d="M8 5v14l11-7Z"/></svg></span>"""
+
+
+def _explore_section(key: str, title: str, cards: list[str]) -> str:
+    return (
+        f'<section class="explore-section" aria-labelledby="explore-{key}">'
+        f'<h2 class="explore-heading" id="explore-{key}">{title} '
+        f'<span class="explore-count">({len(cards)})</span></h2>{"".join(cards)}</section>'
+    )
+
+
+def _explore_folder(name: str, path: str, mode: str = "explore") -> str:
+    url = escape(_browse_url(mode, path), quote=True)
+    return f"""<a class="button explore-card explore-folder" href="{url}">
+{FOLDER_ICON}
 <span class="explore-content"><span class="explore-name">{escape(name)}</span>
 <span class="explore-detail">Open folder</span></span>
 <span class="explore-chevron" aria-hidden="true">›</span></a>"""
@@ -130,7 +143,14 @@ def _explore_file(media: dict) -> str:
     return f"""<form method="post" action="/explore/play">
 <input type="hidden" name="media_id" value="{media['id']}">
 <button type="submit" class="explore-card explore-file {tone}">
-<span class="explore-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"
-focusable="false"><path d="M8 5v14l11-7Z"/></svg></span>
+{PLAY_ICON}
 <span class="explore-content"><span class="explore-name">{escape(Path(media['relative_path']).name)}</span>
 <span class="explore-detail">Play clip</span>{badges}</span></button></form>"""
+
+
+def _stream_file(name: str, path: str) -> str:
+    # app.js handles data-stream-path clicks; Stream has no feedback, so no form or badges.
+    return f"""<button type="button" class="explore-card explore-file" data-stream-path="{escape(path, quote=True)}">
+{PLAY_ICON}
+<span class="explore-content"><span class="explore-name">{escape(name)}</span>
+<span class="explore-detail">Play</span></span></button>"""

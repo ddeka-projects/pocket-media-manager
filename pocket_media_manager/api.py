@@ -20,7 +20,16 @@ from .service import (
     _browse_url,
     _stream_files,
 )
-from .presentation import _page, _form, _link, _feedback_page, _explore_folder, _explore_file
+from .presentation import (
+    _page,
+    _form,
+    _link,
+    _feedback_page,
+    _explore_section,
+    _explore_folder,
+    _explore_file,
+    _stream_file,
+)
 from .playback import _launch, _launch_mpv, build_vlc_url
 
 router = APIRouter()
@@ -177,15 +186,12 @@ def explore(request: Request, path: str | None = None):
         + "</span></p>"
     )
     if folders:
-        body += f'<section class="explore-section" aria-labelledby="explore-folders"><h2 class="explore-heading" id="explore-folders">Folders <span class="explore-count">({len(folders)})</span></h2>'
-        for folder in sorted(folders, key=str.lower):
-            body += _explore_folder(folder, prefix + folder)
-        body += "</section>"
+        cards = [
+            _explore_folder(folder, prefix + folder) for folder in sorted(folders, key=str.lower)
+        ]
+        body += _explore_section("folders", "Folders", cards)
     if files:
-        body += f'<section class="explore-section" aria-labelledby="explore-clips"><h2 class="explore-heading" id="explore-clips">Clips <span class="explore-count">({len(files)})</span></h2>'
-        for row in files:
-            body += _explore_file(row)
-        body += "</section>"
+        body += _explore_section("clips", "Clips", [_explore_file(row) for row in files])
     if not folders and not files:
         body += "<p>No eligible media here. Refresh Library after adding files.</p>"
     return _page("Explore", body)
@@ -216,7 +222,7 @@ def stream_browse(request: Request, path: str | None = None):
     body += (
         '</div><p><span class="tag">'
         + escape(relative or str(root))
-        + '</span></p><p id="stream-status" aria-live="polite"></p><div class="stack">'
+        + '</span></p><p id="stream-status" aria-live="polite"></p>'
     )
     if current.is_dir():
         descendants = _stream_files(request, current)
@@ -224,18 +230,18 @@ def stream_browse(request: Request, path: str | None = None):
             {item.relative_to(current).parts[0] for item in descendants if item.parent != current},
             key=str.lower,
         )
-        for folder in folders:
-            body += _link(
-                _browse_url("stream", (relative + "/" if relative else "") + folder), folder
-            )
-        for item in sorted(
+        files = sorted(
             (item for item in descendants if item.parent == current), key=lambda p: p.name.lower()
-        ):
-            value = escape(item.relative_to(root).as_posix(), quote=True)
-            body += f'<button class="secondary" type="button" data-stream-path="{value}">{escape(item.name)}</button>'
+        )
+        prefix = relative + "/" if relative else ""
+        if folders:
+            cards = [_explore_folder(folder, prefix + folder, "stream") for folder in folders]
+            body += _explore_section("folders", "Folders", cards)
+        if files:
+            cards = [_stream_file(item.name, item.relative_to(root).as_posix()) for item in files]
+            body += _explore_section("files", "Files", cards)
     else:
         body += "<p>Create the configured Stream folder and put direct-play media there.</p>"
-    body += "</div>"
     return _page("Stream", body)
 
 

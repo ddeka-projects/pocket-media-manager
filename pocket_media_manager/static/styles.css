@@ -15,6 +15,7 @@ button.danger {background:#9d2020;border-color:#9d2020}
   overflow-wrap:anywhere}
 .notice {border:1px solid #bcbcb5;border-radius:6px;padding:.8rem;display:grid;gap:.6rem}
 .error {color:#9d2020} .player-toggle {display:flex;gap:.5rem}
+#stream-status:empty {display:none}
 .player-toggle button {padding:.5rem} .player-toggle .active {background:#181818;color:white}
 .explore-section {display:grid;gap:.65rem}
 .explore-heading {display:flex;align-items:center;gap:.5rem;margin:.4rem 0 .1rem}
