@@ -14,8 +14,8 @@ the selections. No recommendation profiles remain.
 **Explore** shows catalogued folders and files alphabetically. Choosing a file
 records an encounter and opens the player; feedback returns to the same folder.
 Folders and clips appear in separate groups: blue folder cards have a folder
-icon, an Open folder label, and a chevron; media cards have a play icon and a
-Play clip label. Favorites use a light green background and border, while
+icon and a chevron; media cards have a play icon. Stream uses the same cards.
+Favorites use a light green background and border, while
 Not for me clips use light red. Dark filenames remain readable, and text badges
 identify each preference without relying on color. Choosing Not for me removes
 Favorite automatically, so the clip switches from green to red with only the
