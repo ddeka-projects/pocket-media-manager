@@ -1,5 +1,6 @@
 """HTTP routes for the local web app."""
 
+from collections import Counter
 from pathlib import Path
 from urllib.parse import urlencode
 from html import escape
@@ -28,6 +29,7 @@ from .presentation import (
     _explore_section,
     _explore_folder,
     _explore_file,
+    _select_folder,
     _stream_file,
 )
 from .playback import _launch, _launch_mpv, build_vlc_url
@@ -121,18 +123,17 @@ def next_video(request: Request, player: str | None = Form(None)) -> dict:
 @router.get("/select", response_class=HTMLResponse)
 def select_folders(request: Request):
     rows = _db(request).media_rows()
-    folders = sorted(
-        {row["relative_path"].split("/", 1)[0] for row in rows if "/" in row["relative_path"]},
-        key=str.lower,
+    clips = Counter(
+        row["relative_path"].split("/", 1)[0] for row in rows if "/" in row["relative_path"]
     )
+    folders = sorted(clips, key=str.lower)
     selected = set(request.state.browser["folders"])
     body = '<h1>Recommend with Selections</h1><div class="toolbar row">'
     body += '<button form="selection-form">Recommend</button>' + _link("/", "Home") + "</div>"
     body += '<div class="row"><button class="secondary" type="button" data-select="all">Select All</button><button class="secondary" type="button" data-select="none">Deselect All</button></div>'
     body += '<form id="selection-form" method="post" action="/recommend/selected" class="stack">'
     for folder in folders:
-        checked = " checked" if folder in selected else ""
-        body += f'<label class="check"><input type="checkbox" name="folders" value="{escape(folder, quote=True)}"{checked}>{escape(folder)}</label>'
+        body += _select_folder(folder, clips[folder], folder in selected)
     body += "</form>" + _form("/select/cancel", "Cancel and Clear Selections")
     if not folders:
         body += "<p>No eligible folders found. Refresh Library after adding media.</p>"

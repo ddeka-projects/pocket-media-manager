@@ -6,7 +6,8 @@ Configuration names and code responsibilities are in [design.md](design.md).
 ## Watching and Giving Feedback
 
 **Recommend** picks a clip with the one recommendation engine. **Recommend with
-Selections** restricts the pool to checked top-level folders, recursively.
+Selections** restricts the pool to the top-level folders you select, recursively. Each folder
+is a card showing its eligible clip count; tap it to select or deselect it.
 Selections persist per browser and feedback returns to that page. Cancel clears
 the selections. No recommendation profiles remain.
 

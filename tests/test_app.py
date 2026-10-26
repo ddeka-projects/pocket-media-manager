@@ -241,6 +241,18 @@ class AppTests(unittest.TestCase):
                     database.refresh_catalog()
             self.assertEqual(len(database.media_rows()), 1)
 
+    def test_selection_page_lists_folder_cards_with_clip_counts(self):
+        (self.root / "series").mkdir()
+        (self.root / "series" / "one.mp4").write_bytes(b"one")
+        (self.root / "series" / "two.mp4").write_bytes(b"two")
+        with self.client() as client:
+            page = client.get("/select", headers=self.claim(client)).text
+        self.assertEqual(page.count('class="explore-card select-card"'), 2)
+        self.assertIn('name="folders" value="folder"', page)
+        self.assertIn("1 clip<", page)
+        self.assertIn("2 clips<", page)
+        self.assertNotIn("_stream", page)
+
     def test_backup_is_valid_and_restore_preserves_feedback(self):
         with self.client() as client:
             database = client.app.state.database

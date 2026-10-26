@@ -131,6 +131,18 @@ def _explore_folder(name: str, path: str, mode: str = "explore") -> str:
 <span class="explore-chevron" aria-hidden="true">›</span></a>"""
 
 
+def _select_folder(name: str, clips: int, checked: bool) -> str:
+    # The real checkbox stays in the label so tapping the card toggles it; CSS styles the state.
+    state = " checked" if checked else ""
+    count = f"{clips} clip" + ("" if clips == 1 else "s")
+    return f"""<label class="explore-card select-card">
+<input class="select-input" type="checkbox" name="folders" value="{escape(name, quote=True)}"{state}>
+{FOLDER_ICON}
+<span class="explore-content"><span class="explore-name">{escape(name)}</span>
+<span class="explore-detail">{count}</span></span>
+<span class="select-mark" aria-hidden="true">✓</span></label>"""
+
+
 def _explore_file(media: dict) -> str:
     tone = "is-not-for-me" if media["not_for_me"] else "is-favorite" if media["favorite"] else ""
     badges = ""

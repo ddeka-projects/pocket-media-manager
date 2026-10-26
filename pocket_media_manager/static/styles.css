@@ -20,7 +20,7 @@ button.danger {background:#9d2020;border-color:#9d2020}
 .explore-section {display:grid;gap:.65rem}
 .explore-heading {display:flex;align-items:center;gap:.5rem;margin:.4rem 0 .1rem}
 .explore-count {font-size:.8rem;font-weight:400;color:#626962}
-a.explore-card,button.explore-card {display:flex;align-items:center;gap:.85rem;text-align:left;
+a.explore-card,button.explore-card,label.explore-card {display:flex;align-items:center;gap:.85rem;text-align:left;
   border:1px solid #d1d6cf;border-left-width:4px;border-radius:12px;padding:1rem;
   background:#fff;color:#242824;line-height:1.4;box-shadow:0 1px 2px #18181808;
   transition:box-shadow .12s ease}
@@ -49,4 +49,14 @@ button.explore-file.is-not-for-me {background:#fff0ef;border-color:#d5a19c;
   font-weight:600;border-radius:999px;padding:.15rem .5rem}
 .badge-favorite {background:#d8eddf;color:#1d5934}
 .badge-not-for-me {background:#f7dad6;color:#7c2e25}
-@media (prefers-reduced-motion:reduce) {a.explore-card,button.explore-card {transition:none}}
+.select-card {position:relative;cursor:pointer}
+.select-input {position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.select-card:has(.select-input:focus-visible) {outline:3px solid #365989;outline-offset:3px}
+.select-mark {display:grid;place-items:center;flex:0 0 1.6rem;height:1.6rem;border-radius:50%;
+  border:1.5px solid #bcbcb5;color:transparent;font-size:.9rem;font-weight:700}
+.select-card:has(.select-input:checked) {background:#edf2f9;border-color:#b7c8df;
+  border-left-color:#365989;color:#243e61}
+.select-card:has(.select-input:checked) .explore-icon {background:#dce7f5}
+.select-card:has(.select-input:checked) .explore-detail {color:#52647c}
+.select-card:has(.select-input:checked) .select-mark {background:#365989;border-color:#365989;color:#fff}
+@media (prefers-reduced-motion:reduce) {a.explore-card,button.explore-card,label.explore-card {transition:none}}
