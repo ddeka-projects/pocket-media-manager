@@ -177,7 +177,6 @@ def explore(request: Request, path: str | None = None):
         + escape(relative or str(_settings(request).media_root))
         + "</span></p>"
     )
-    body += "<p>Open a folder to browse. Playing a clip opens your player and feedback.</p>"
     if folders:
         body += f'<section class="explore-section" aria-labelledby="explore-folders"><h2 class="explore-heading" id="explore-folders">Folders <span class="explore-count">({len(folders)})</span></h2>'
         for folder in sorted(folders, key=str.lower):
