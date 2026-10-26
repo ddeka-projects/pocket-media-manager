@@ -119,7 +119,6 @@ def select_folders(request: Request):
     selected = set(request.state.browser["folders"])
     body = '<h1>Recommend with Selections</h1><div class="toolbar row">'
     body += '<button form="selection-form">Recommend</button>' + _link("/", "Home") + "</div>"
-    body += f"<p>Folders in <em>{escape(str(_settings(request).media_root))}</em></p>"
     body += '<div class="row"><button class="secondary" type="button" data-select="all">Select All</button><button class="secondary" type="button" data-select="none">Deselect All</button></div>'
     body += '<form id="selection-form" method="post" action="/recommend/selected" class="stack">'
     for folder in folders:
