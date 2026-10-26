@@ -53,6 +53,7 @@
     text.textContent = message;
     const button = document.createElement("button");
     button.type = "button";
+    button.className = "primary";
     button.dataset.takeControl = "true";
     button.textContent = "Take Control";
     main().append(heading, text, button);

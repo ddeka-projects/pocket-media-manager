@@ -41,6 +41,21 @@ conflicting or repeated feedback safely. A process guard is acquired before
 initialization or scanning, preventing a second app server on the same data,
 even when configured on a different port.
 
+## Interface conventions
+
+Screens share one card and button vocabulary, so meaning stays consistent:
+
+- **Blue** (`--accent`) marks the main action or a chosen item: the single
+  primary button per screen, the Recommend card, selected folders, and folder
+  cards. **Green** means Favorite and **red** means Not for me; neither is used
+  for anything else. Filled red is reserved for a final destructive confirm.
+- Buttons are neutral (white) by default. `primary` is used at most once per
+  screen; `quiet` is text-only for low-stakes exits such as No feedback or
+  Cancel; `pill` is the compact Home/Back style in the sticky toolbar;
+  `compact` is for secondary utilities such as the Maintenance group.
+- Lists of things to open, play, or pick are cards (`explore-card`), built by
+  the shared helpers in `presentation.py`.
+
 ## Configuration
 
 Settings load from the root `.env`, then real environment values override it.

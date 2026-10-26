@@ -26,7 +26,8 @@ def _page(title: str, body: str, status_code: int = 200) -> HTMLResponse:
     )
 
 
-def _form(action: str, label: str, fields: dict | None = None, kind: str = "secondary") -> str:
+# Button kinds: "" (neutral), "primary" (one per screen), "quiet", "pill", "compact", "danger".
+def _form(action: str, label: str, fields: dict | None = None, kind: str = "") -> str:
     inputs = "".join(
         f'<input type="hidden" name="{escape(str(key), quote=True)}" '
         f'value="{escape(str(value), quote=True)}">'
@@ -35,15 +36,15 @@ def _form(action: str, label: str, fields: dict | None = None, kind: str = "seco
     return f'<form method="post" action="{escape(action, quote=True)}">{inputs}<button class="{kind}">{escape(label)}</button></form>'
 
 
-def _link(url: str, label: str) -> str:
-    return f'<a class="button secondary" href="{escape(url, quote=True)}">{escape(label)}</a>'
+def _link(url: str, label: str, kind: str = "") -> str:
+    return f'<a class="button {kind}" href="{escape(url, quote=True)}">{escape(label)}</a>'
 
 
 def _error(request: Request, code: int, message: str, error_code: str | None = None):
     if _html(request):
         pending = getattr(request.state, "pending_encounter", None)
         navigation = (
-            _link("/feedback/" + pending["id"], "Back to Feedback")
+            _link("/feedback/" + pending["id"], "Back to Feedback", "primary")
             if pending
             else _link("/", "Home")
             + _link("/explore", "Explore")
@@ -66,7 +67,7 @@ def _feedback_page(request: Request, encounter: dict, launch: dict | None = None
         return _page(
             "Feedback saved",
             "<h1>Feedback saved</h1><p>This encounter is already closed.</p>"
-            + _link(encounter["context"]["return_path"], "Continue")
+            + _link(encounter["context"]["return_path"], "Continue", "primary")
             + _link("/", "Home"),
         )
     media = _db(request).media(encounter["media_id"])
@@ -80,14 +81,17 @@ def _feedback_page(request: Request, encounter: dict, launch: dict | None = None
     if launch and launch.get("player_url"):
         body += f'<span hidden data-player-url="{escape(launch["player_url"], quote=True)}"></span>'
     player_label = "mpv (PC)" if encounter["context"]["player"] == "mpv" else "VLC (Phone)"
+    body += '<div class="feedback-actions">'
     body += _form(f"/encounters/{identifier}/play", "Open Player — " + player_label)
     if not media["not_for_me"]:
         body += _form(
             "/feedback/favorite",
-            "★ Favorite — remove" if favorite else "☆ Mark as Favorite",
+            "★ Favorite" if favorite else "☆ Favorite",
             {"encounter_id": identifier, "favorite": "0" if favorite else "1"},
+            "favorite-toggle is-on" if favorite else "favorite-toggle",
         )
-    else:
+    body += "</div>"
+    if media["not_for_me"]:
         body += "<p>Allow recommendations again before marking this clip as Favorite.</p>"
     for preference, label in (
         ("less_often", "Restore normal frequency"),
@@ -95,21 +99,38 @@ def _feedback_page(request: Request, encounter: dict, launch: dict | None = None
     ):
         if media[preference]:
             body += _form(
-                "/feedback/restore", label, {"encounter_id": identifier, "preference": preference}
+                "/feedback/restore",
+                label,
+                {"encounter_id": identifier, "preference": preference},
+                "compact",
             )
-    body += '<div class="stack">'
+    body += '<h2 class="section-label">How was it?</h2><div class="choice-grid lead">'
     for value, label in FEEDBACK.items():
-        body += _form("/feedback/" + value, label, {"encounter_id": identifier}, "")
-    body += _form("/feedback/no_feedback", "No feedback", {"encounter_id": identifier})
+        kind = "choice choice-not-for-me" if value == "not_for_me" else "choice"
+        body += _form("/feedback/" + value, label, {"encounter_id": identifier}, kind)
+    body += '</div><div class="quiet-row">'
+    body += _form("/feedback/no_feedback", "No feedback", {"encounter_id": identifier}, "quiet")
     if not _db(request).blocked(encounter["media_id"]):
-        body += _form("/feedback/other", "Something Else", {"encounter_id": identifier})
+        body += _form("/feedback/other", "Something Else", {"encounter_id": identifier}, "quiet")
     body += "</div>"
     return _page("Feedback", body)
 
 
-FOLDER_ICON = """<span class="explore-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"
+def _line_icon(*paths: str) -> str:
+    drawing = "".join(f'<path d="{path}"/>' for path in paths)
+    return f"""<span class="explore-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"
 stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
-focusable="false"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9H3Z"/></svg></span>"""
+focusable="false">{drawing}</svg></span>"""
+
+
+FOLDER_ICON = _line_icon("M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9H3Z")
+SHUFFLE_ICON = _line_icon("M16 4h4v4", "M4 20 20 4", "M20 16v4h-4", "M15 15l5 5", "M4 4l5 5")
+CHECKLIST_ICON = _line_icon(
+    "M3.5 6.5 5 8l2.5-2.5", "M3.5 13.5 5 15l2.5-2.5", "M11 7h10", "M11 14h10", "M11 20h10"
+)
+STREAM_ICON = _line_icon(
+    "M4 8h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z", "M8 3l4 4 4-4"
+)
 PLAY_ICON = """<span class="explore-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"
 focusable="false"><path d="M8 5v14l11-7Z"/></svg></span>"""
 
@@ -128,6 +149,14 @@ def _explore_folder(name: str, path: str, mode: str = "explore") -> str:
 {FOLDER_ICON}
 <span class="explore-content"><span class="explore-name">{escape(name)}</span>
 <span class="explore-detail">Open folder</span></span>
+<span class="explore-chevron" aria-hidden="true">›</span></a>"""
+
+
+def _home_card(url: str, icon: str, name: str, detail: str) -> str:
+    return f"""<a class="button explore-card" href="{escape(url, quote=True)}">
+{icon}
+<span class="explore-content"><span class="explore-name">{escape(name)}</span>
+<span class="explore-detail">{escape(detail)}</span></span>
 <span class="explore-chevron" aria-hidden="true">›</span></a>"""
 
 

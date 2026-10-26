@@ -31,6 +31,11 @@ from .presentation import (
     _explore_file,
     _select_folder,
     _stream_file,
+    _home_card,
+    CHECKLIST_ICON,
+    FOLDER_ICON,
+    SHUFFLE_ICON,
+    STREAM_ICON,
 )
 from .playback import _launch, _launch_mpv, build_vlc_url
 
@@ -64,26 +69,36 @@ def web_manifest() -> dict:
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request):
     player = request.state.browser["player"]
+    selected = len(request.state.browser["folders"])
     body = '<h1>Pocket Media Manager</h1><div class="player-toggle">'
     for value, label in (("vlc", "VLC (Phone)"), ("mpv", "mpv (PC)")):
-        body += f'<button type="button" class="secondary{" active" if player == value else ""}" data-player="{value}">{label}</button>'
-    body += '</div><div class="stack">'
-    body += _form("/recommend", "Recommend", {"player": player}, "")
-    for url, label in (
-        ("/select", "Recommend with Selections"),
-        ("/explore", "Explore"),
-        ("/stream", "Stream"),
-    ):
-        body += (
-            f'<form method="get" action="{url}"><button class="secondary">{label}</button></form>'
-        )
+        body += f'<button type="button" class="{"active" if player == value else ""}" data-player="{value}">{label}</button>'
+    # app.js keeps the hidden player input in step with the switch above.
+    body += f"""</div><div class="home-cards"><form method="post" action="/recommend">
+<input type="hidden" name="player" value="{escape(player, quote=True)}">
+<button class="explore-card home-hero">{SHUFFLE_ICON}
+<span class="explore-content"><span class="explore-name">Recommend</span>
+<span class="explore-detail">Pick something from the whole library</span></span></button></form>"""
+    body += _home_card(
+        "/select",
+        CHECKLIST_ICON,
+        "Recommend with Selections",
+        (
+            f"{selected} folder{'' if selected == 1 else 's'} selected"
+            if selected
+            else "Only from folders you choose"
+        ),
+    )
+    body += _home_card("/explore", FOLDER_ICON, "Explore", "Browse the library folder by folder")
+    body += _home_card("/stream", STREAM_ICON, "Stream", "Play files from the Stream folder")
+    body += '</div><h2 class="section-label">Maintenance</h2><div class="maintenance">'
     for url, label in (
         ("/feedback/addressed", "Address Other Feedback"),
         ("/cleanup", "Clean Up"),
         ("/reset", "Reset Preferences"),
     ):
-        body += _link(url, label)
-    body += _form("/library/refresh", "Refresh Library")
+        body += _link(url, label, "compact")
+    body += _form("/library/refresh", "Refresh Library", kind="compact")
     body += "</div>"
     return _page("Pocket Media Manager", body)
 
@@ -128,13 +143,14 @@ def select_folders(request: Request):
     )
     folders = sorted(clips, key=str.lower)
     selected = set(request.state.browser["folders"])
-    body = '<h1>Recommend with Selections</h1><div class="toolbar row">'
-    body += '<button form="selection-form">Recommend</button>' + _link("/", "Home") + "</div>"
-    body += '<div class="row"><button class="secondary" type="button" data-select="all">Select All</button><button class="secondary" type="button" data-select="none">Deselect All</button></div>'
+    body = '<h1>Recommend with Selections</h1><div class="toolbar">'
+    body += '<button class="primary" form="selection-form">Recommend</button>'
+    body += _link("/", "Home", "pill") + "</div>"
+    body += '<div class="row"><button class="compact" type="button" data-select="all">Select All</button><button class="compact" type="button" data-select="none">Deselect All</button></div>'
     body += '<form id="selection-form" method="post" action="/recommend/selected" class="stack">'
     for folder in folders:
         body += _select_folder(folder, clips[folder], folder in selected)
-    body += "</form>" + _form("/select/cancel", "Cancel and Clear Selections")
+    body += "</form>" + _form("/select/cancel", "Cancel and Clear Selections", kind="quiet")
     if not folders:
         body += "<p>No eligible folders found. Refresh Library after adding media.</p>"
     return _page("Select Folders", body)
@@ -176,11 +192,11 @@ def explore(request: Request, path: str | None = None):
             folders.add(remainder.split("/", 1)[0])
         else:
             files.append(row)
-    body = '<h1>Explore</h1><div class="toolbar row">' + _link("/", "Home")
+    body = '<h1>Explore</h1><div class="toolbar">'
     if relative:
-        body += _link(
-            _browse_url("explore", relative.rsplit("/", 1)[0] if "/" in relative else ""), "Back"
-        )
+        parent = relative.rsplit("/", 1)[0] if "/" in relative else ""
+        body += _link(_browse_url("explore", parent), "‹ Back", "pill")
+    body += _link("/", "Home", "pill")
     body += (
         '</div><p><span class="tag">'
         + escape(relative or str(_settings(request).media_root))
@@ -215,11 +231,11 @@ def stream_browse(request: Request, path: str | None = None):
     relative = _relative_folder(request, path, stream=True)
     root = (_settings(request).media_root / _settings(request).stream_folder).resolve()
     current = root / relative
-    body = '<h1>Stream</h1><div class="toolbar row">' + _link("/", "Home")
+    body = '<h1>Stream</h1><div class="toolbar">'
     if relative:
-        body += _link(
-            _browse_url("stream", relative.rsplit("/", 1)[0] if "/" in relative else ""), "Back"
-        )
+        parent = relative.rsplit("/", 1)[0] if "/" in relative else ""
+        body += _link(_browse_url("stream", parent), "‹ Back", "pill")
+    body += _link("/", "Home", "pill")
     body += (
         '</div><p><span class="tag">'
         + escape(relative or str(root))
@@ -323,16 +339,16 @@ def other_page(request: Request, encounter_id: str):
     body = (
         "<h1>Describe Change Required</h1><p>"
         + escape(encounter["relative_path"])
-        + '</p><div class="stack">'
+        + '</p><div class="choice-grid">'
     )
     for value, label in OTHER_FEEDBACK.items():
         body += _form(
             "/feedback/other/save",
             label,
             {"encounter_id": encounter_id, "feedback_type": value},
-            "",
+            "choice",
         )
-    body += "</div>" + _link("/feedback/" + encounter_id, "Cancel")
+    body += "</div>" + _link("/feedback/" + encounter_id, "Cancel", "quiet")
     return _page("Describe Change Required", body)
 
 
@@ -344,7 +360,8 @@ def save_other(request: Request, encounter_id: str = Form(...), feedback_type: s
 @router.get("/feedback/addressed", response_class=HTMLResponse)
 def addressed_page(request: Request):
     tasks = _db(request).tasks()
-    body = "<h1>Address Other Feedback</h1>" + _link("/", "Home")
+    body = "<h1>Address Other Feedback</h1>"
+    body += '<div class="toolbar">' + _link("/", "Home", "pill") + "</div>"
     body += '<form method="post" action="/feedback/addressed" class="stack">'
     for value, label in OTHER_FEEDBACK.items():
         group = [task for task in tasks if task["type"] == value]
@@ -356,7 +373,7 @@ def addressed_page(request: Request):
             folder = path.split("/", 1)[0] if "/" in path else "Media root"
             body += f'<label class="check"><input type="checkbox" name="task_ids" value="{task["id"]}"><span><span class="tag">{escape(folder)}</span> {escape(Path(path).name)}</span></label>'
     body += (
-        "<button>Save Addressed Items</button></form>"
+        '<button class="primary">Save Addressed Items</button></form>'
         if tasks
         else "</form><p>No outstanding tasks.</p>"
     )
@@ -383,11 +400,12 @@ def submit_feedback(request: Request, feedback: str, encounter_id: str = Form(..
 def cleanup_page(request: Request):
     rows = _db(request).media_rows(unavailable=True)
     body = "<h1>Clean Up</h1><p>Remove selected unavailable records and their encounter history. Media files are never deleted. Outstanding maintenance tasks are kept.</p>"
-    body += _link("/", "Cancel") + '<form method="post" action="/cleanup" class="stack">'
+    body += '<div class="toolbar">' + _link("/", "Cancel", "pill") + "</div>"
+    body += '<form method="post" action="/cleanup" class="stack">'
     for row in rows:
         body += f'<label class="check"><input type="checkbox" name="media_ids" value="{row["id"]}">{escape(row["relative_path"])}</label>'
     body += (
-        "<button>Clean Selected Records</button></form>"
+        '<button class="primary">Clean Selected Records</button></form>'
         if rows
         else "</form><p>No unavailable records. Refresh Library to check for deleted files.</p>"
     )
