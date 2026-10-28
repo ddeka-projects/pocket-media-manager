@@ -96,6 +96,25 @@
     }, 100);
   }
 
+  // Tap cue: a brief glow on whatever was tapped. A new screen waits until the
+  // glow has peaked so the cue is visible even when the PC answers instantly.
+  const TAP_TARGETS = "button, a.button, a.explore-card, label.select-card, .crumbs a";
+  const TAP_PEAK_MS = 150;
+  let lastTapAt = 0;
+
+  function flashTap(element) {
+    element.classList.remove("tapped");
+    void element.offsetWidth; // restart the animation on repeated taps
+    element.classList.add("tapped");
+    window.setTimeout(() => element.classList.remove("tapped"), 450);
+    lastTapAt = Date.now();
+  }
+
+  async function tapSettled() {
+    const remaining = lastTapAt + TAP_PEAK_MS - Date.now();
+    if (remaining > 0) await new Promise(resolve => window.setTimeout(resolve, remaining));
+  }
+
   async function navigate(url, options = {}, push = true) {
     if (busy || !token) return;
     busy = true;
@@ -115,6 +134,8 @@
       const documentPage = new DOMParser().parseFromString(html, "text/html");
       const content = documentPage.querySelector("main");
       if (!content) throw new Error("The server returned an incomplete page.");
+      await tapSettled();
+      requireCurrentOwner(epoch);
       main().replaceChildren(...content.childNodes);
       document.title = documentPage.title;
       if (push) history.pushState(null, "", response.url);
@@ -219,6 +240,15 @@
       await navigate(url.href, {method: "POST", body});
     }
   });
+
+  // Registered after the main click handler; capture makes it run first in browsers.
+  document.addEventListener("click", event => {
+    if (event.target.matches?.("input")) return; // a label's checkbox echoes its click
+    const target = event.target.closest?.(TAP_TARGETS);
+    if (target) flashTap(target);
+  }, true);
+  // iPhone Safari only shows :active press states when a touch listener exists.
+  document.addEventListener("touchstart", () => {}, {passive: true});
 
   window.addEventListener("popstate", () => navigate(location.href, {}, false));
   window.addEventListener("pageshow", event => { if (event.persisted) location.reload(); });

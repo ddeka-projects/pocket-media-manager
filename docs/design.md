@@ -57,6 +57,10 @@ one card and button vocabulary, so meaning stays consistent:
   `compact` is for secondary utilities such as the Maintenance group.
 - Lists of things to open, play, or pick are cards (`explore-card`), built by
   the shared helpers in `presentation.py`.
+- Every tap plays a short glow in the item's own colour (`--glow`). Its length
+  is the `.tapped` animation in `styles.css` (0.32s); a new screen waits until
+  the glow peaks, `TAP_PEAK_MS` in `app.js` (150ms). Reduce Motion shows a
+  static highlight instead.
 
 ## Configuration
 

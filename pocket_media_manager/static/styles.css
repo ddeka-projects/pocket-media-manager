@@ -127,6 +127,21 @@ button.explore-file.is-not-for-me {background:var(--bad-soft);border-color:var(-
 .select-card:has(.select-input:checked) .explore-icon {background:var(--accent-icon)}
 .select-card:has(.select-input:checked) .select-mark {background:var(--accent);
   border-color:var(--accent);color:var(--on-fill)}
+/* Tap cue: a ring in the item's own colour lights up just outside its border, then fades. */
+button,a.button,a.explore-card,label.select-card {--glow:var(--accent-edge)}
+button.primary,a.primary,button.explore-card.home-hero {--glow:var(--accent-ink)}
+button.danger,button.explore-file.is-not-for-me {--glow:var(--bad-edge)}
+button.explore-file.is-favorite,button.favorite-toggle.is-on {--glow:var(--good-edge)}
+.tapped {animation:tap-glow .32s ease-out}
+.crumbs a.tapped {animation:tap-text .32s ease-out}
+@keyframes tap-glow {
+  0% {box-shadow:0 0 0 0 var(--glow),0 0 0 0 transparent}
+  35% {box-shadow:0 0 0 2px var(--glow),0 0 16px 3px color-mix(in srgb,var(--glow) 45%,transparent)}
+  100% {box-shadow:0 0 0 3px transparent,0 0 22px 6px transparent}}
+@keyframes tap-text {35% {color:var(--accent-text)}}
 @media (prefers-reduced-motion:reduce) {button,a.button,a.explore-card,button.explore-card,
   label.explore-card {transition:none} button:active,a.button:active,
-  a.explore-card:active,button.explore-card:active,label.explore-card:active {transform:none}}
+  a.explore-card:active,button.explore-card:active,label.explore-card:active {transform:none}
+  .tapped,.crumbs a.tapped {animation:none} .crumbs a.tapped {color:var(--accent-text)}
+  button.tapped,a.button.tapped,a.explore-card.tapped,label.select-card.tapped {
+    box-shadow:0 0 0 2px var(--glow)}}
