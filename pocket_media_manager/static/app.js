@@ -96,23 +96,27 @@
     }, 100);
   }
 
-  // Tap cue: a brief glow on whatever was tapped. A new screen waits until the
-  // glow has peaked so the cue is visible even when the PC answers instantly.
+  // Light up on contact; feedback never holds up a request or a new screen.
   const TAP_TARGETS = "button, a.button, a.explore-card, label.select-card, .crumbs a";
-  const TAP_PEAK_MS = 150;
-  let lastTapAt = 0;
+  const tapTimers = new WeakMap();
+  let pressed = null;
+
+  function tapTarget(event) {
+    const target = event.target.closest?.(TAP_TARGETS);
+    return target?.matches(":disabled") ? null : target;
+  }
 
   function flashTap(element) {
+    window.clearTimeout(tapTimers.get(element));
     element.classList.remove("tapped");
     void element.offsetWidth; // restart the animation on repeated taps
     element.classList.add("tapped");
-    window.setTimeout(() => element.classList.remove("tapped"), 450);
-    lastTapAt = Date.now();
+    tapTimers.set(element, window.setTimeout(() => element.classList.remove("tapped"), 450));
   }
 
-  async function tapSettled() {
-    const remaining = lastTapAt + TAP_PEAK_MS - Date.now();
-    if (remaining > 0) await new Promise(resolve => window.setTimeout(resolve, remaining));
+  function clearPress() {
+    if (pressed) pressed.element.classList.remove("pressing");
+    pressed = null;
   }
 
   async function navigate(url, options = {}, push = true) {
@@ -134,8 +138,6 @@
       const documentPage = new DOMParser().parseFromString(html, "text/html");
       const content = documentPage.querySelector("main");
       if (!content) throw new Error("The server returned an incomplete page.");
-      await tapSettled();
-      requireCurrentOwner(epoch);
       main().replaceChildren(...content.childNodes);
       document.title = documentPage.title;
       if (push) history.pushState(null, "", response.url);
@@ -241,10 +243,30 @@
     }
   });
 
-  // Registered after the main click handler; capture makes it run first in browsers.
+  document.addEventListener("pointerdown", event => {
+    if (!event.isPrimary || event.button !== 0) return;
+    clearPress();
+    const target = tapTarget(event);
+    if (!target) return;
+    window.clearTimeout(tapTimers.get(target));
+    target.classList.remove("tapped");
+    target.classList.add("pressing");
+    pressed = {element: target, pointerId: event.pointerId};
+  }, {passive: true});
+  document.addEventListener("pointerup", event => {
+    if (event.pointerId !== pressed?.pointerId) return;
+    const element = pressed.element;
+    clearPress();
+    if (tapTarget(event) === element) flashTap(element);
+  }, {passive: true});
+  document.addEventListener("pointercancel", event => {
+    if (event.pointerId === pressed?.pointerId) clearPress();
+  }, {passive: true});
+  window.addEventListener("blur", clearPress);
+  // Keyboard and assistive activation have no preceding pointer press.
   document.addEventListener("click", event => {
-    if (event.target.matches?.("input")) return; // a label's checkbox echoes its click
-    const target = event.target.closest?.(TAP_TARGETS);
+    if (event.detail !== 0 || event.target.matches?.("input")) return;
+    const target = tapTarget(event);
     if (target) flashTap(target);
   }, true);
   // iPhone Safari only shows :active press states when a touch listener exists.

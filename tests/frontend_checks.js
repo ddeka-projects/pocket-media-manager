@@ -9,6 +9,46 @@ async function checks() {
   const owned = calls[1][0];
   assert(owned.headers.get("X-Page-Id") === identity && owned.headers.get("X-Controller-Token") === "first-token", "Protected navigation uses the common ownership headers");
 
+  const tapButton = button("select", "all");
+  const pointer = (name, target = tapButton, extra = {}) => {
+    for (const listener of document.listeners[name]) {
+      listener({ target, isPrimary: true, button: 0, pointerId: 1, ...extra });
+    }
+  };
+  pointer("pointerdown");
+  assert(tapButton.classList.contains("pressing"), "Touch-down immediately lights the button before a click");
+  pointer("pointerup");
+  assert(!tapButton.classList.contains("pressing") && tapButton.classList.contains("tapped"), "Release fades the glow without holding navigation");
+  const firstFade = timers.length;
+  pointer("pointerdown");
+  assert(clearedTimers.includes(firstFade) && !tapButton.classList.contains("tapped"), "A repeated press cancels the previous fade cleanup");
+  pointer("pointercancel");
+  assert(!tapButton.classList.contains("pressing") && !tapButton.classList.contains("tapped"), "A cancelled touch clears the glow without a release flash");
+  pointer("pointerdown");
+  pointer("pointerup", new Element());
+  assert(!tapButton.classList.contains("pressing") && !tapButton.classList.contains("tapped"), "Releasing outside the button clears the highlight");
+  tapButton.disabled = true;
+  pointer("pointerdown");
+  assert(!tapButton.classList.contains("pressing"), "Disabled buttons do not light up");
+  tapButton.disabled = false;
+  pointer("pointerdown", tapButton, { button: 2 });
+  assert(!tapButton.classList.contains("pressing"), "Secondary mouse buttons do not light up controls");
+  document.listeners.click[1]({ target: tapButton, detail: 0 });
+  assert(tapButton.classList.contains("tapped"), "Keyboard activation retains glow feedback");
+  transport = async () => htmlReply("Instant navigation", "/explore");
+  const beforeInstant = timers.length;
+  // Simulate the click immediately after contact/release. Fake timers never
+  // run automatically, so navigation must finish without a feedback timer.
+  pointer("pointerdown");
+  pointer("pointerup");
+  let instantFinished = false;
+  client.navigate("/explore").then(() => { instantFinished = true; });
+  await tickUntil(() => instantFinished);
+  assert(mainText().includes("Instant navigation"), "A ready page replaces the screen without waiting for the glow");
+  const feedbackTimer = timers.slice(beforeInstant).find(timer => timer.delay === 450);
+  feedbackTimer.action();
+  assert(!tapButton.classList.contains("tapped"), "The release highlight is eventually cleared");
+
   transport = async (input) => {
     if (pathOf(input) === "/explore") return htmlReply("Pending feedback", "/feedback/shared", { feedbackPath: "/feedback/shared" });
     return jsonReply({ ok: true });

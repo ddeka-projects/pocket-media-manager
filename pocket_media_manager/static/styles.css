@@ -132,16 +132,18 @@ button,a.button,a.explore-card,label.select-card {--glow:var(--accent-edge)}
 button.primary,a.primary,button.explore-card.home-hero {--glow:var(--accent-ink)}
 button.danger,button.explore-file.is-not-for-me {--glow:var(--bad-edge)}
 button.explore-file.is-favorite,button.favorite-toggle.is-on {--glow:var(--good-edge)}
+.pressing {box-shadow:0 0 0 2px var(--glow),0 0 16px 3px color-mix(in srgb,var(--glow) 45%,transparent)}
+.crumbs a.pressing {color:var(--accent-text)}
 .tapped {animation:tap-glow .32s ease-out}
 .crumbs a.tapped {animation:tap-text .32s ease-out}
 @keyframes tap-glow {
-  0% {box-shadow:0 0 0 0 var(--glow),0 0 0 0 transparent}
-  35% {box-shadow:0 0 0 2px var(--glow),0 0 16px 3px color-mix(in srgb,var(--glow) 45%,transparent)}
+  0% {box-shadow:0 0 0 2px var(--glow),0 0 16px 3px color-mix(in srgb,var(--glow) 45%,transparent)}
   100% {box-shadow:0 0 0 3px transparent,0 0 22px 6px transparent}}
-@keyframes tap-text {35% {color:var(--accent-text)}}
+@keyframes tap-text {0% {color:var(--accent-text)}}
 @media (prefers-reduced-motion:reduce) {button,a.button,a.explore-card,button.explore-card,
   label.explore-card {transition:none} button:active,a.button:active,
   a.explore-card:active,button.explore-card:active,label.explore-card:active {transform:none}
   .tapped,.crumbs a.tapped {animation:none} .crumbs a.tapped {color:var(--accent-text)}
+  button.pressing,a.button.pressing,a.explore-card.pressing,label.select-card.pressing,
   button.tapped,a.button.tapped,a.explore-card.tapped,label.select-card.tapped {
     box-shadow:0 0 0 2px var(--glow)}}

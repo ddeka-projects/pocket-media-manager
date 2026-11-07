@@ -8,7 +8,13 @@ class Element {
     this.dataset = {};
     this.textContent = "";
     this.attributes = {};
-    this.classList = { toggle() {} };
+    const classes = new Set();
+    this.classList = {
+      add(name) { classes.add(name); },
+      remove(name) { classes.delete(name); },
+      contains(name) { return classes.has(name); },
+      toggle() {},
+    };
   }
   get childNodes() { return this.children; }
   append(...nodes) { this.children.push(...nodes); }
@@ -17,7 +23,13 @@ class Element {
     if (name.startsWith("data-")) return Object.hasOwn(this.dataset, name.slice(5).replace(/-([a-z])/g, (_, value) => value.toUpperCase()));
     return Object.hasOwn(this.attributes, name);
   }
-  closest(selector) { return selector === "button" && this.tag === "button" ? this : null; }
+  matches(selector) {
+    return selector === ":disabled" ? !!this.disabled : selector === this.tag;
+  }
+  closest(selector) {
+    if (this.tag === "button" && selector.split(", ").includes("button")) return this;
+    return null;
+  }
 }
 class FakeHeaders {
   constructor(values = {}) {
