@@ -64,8 +64,8 @@
     const url = new URL(request.url);
     const protectedRequest = url.origin === location.origin && !url.pathname.startsWith("/api/controller/");
     if (!protectedRequest) return originalFetch(request);
-    // VLC/media requests keep their existing streaming lifetime and token.
-    if (/^\/stream\/[^/]+$/.test(url.pathname) && url.pathname !== "/stream/play") return originalFetch(request);
+    // Media bytes have their own lifetime and need no browser ownership grant.
+    if (url.pathname.startsWith("/media/")) return originalFetch(request);
     const epoch = ownershipEpoch;
     request.headers.set("X-Page-Id", pageId);
     if (token) request.headers.set("X-Controller-Token", token);

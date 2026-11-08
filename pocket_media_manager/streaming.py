@@ -35,7 +35,7 @@ class OpenFileResponse(StreamingResponse):
 
 
 def open_media(root, metadata_root, path):
-    """Validate the token path and own its file handle before sending headers."""
+    """Validate the media path and own its file handle before sending headers."""
     root, metadata_root, path = Path(root), Path(metadata_root), Path(path)
     stream = None
     try:
@@ -62,7 +62,7 @@ def open_media(root, metadata_root, path):
     except (OSError, ValueError):
         if stream is not None:
             stream.close()
-        raise AppError("Playback link expired or file unavailable.", 404, "unavailable") from None
+        raise AppError("Media file unavailable.", 404, "unavailable") from None
 
 
 def media_response(root, metadata_root, path, request):

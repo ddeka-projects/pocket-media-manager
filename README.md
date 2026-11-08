@@ -83,26 +83,46 @@ its actions. Active saves and player launches finish before control transfers.
   Not for me clips stand out in red, with text badges too.
 - **Stream** browses the separate `_stream` folder without recommendations or
   feedback. Existing media playback continues when browser control transfers.
+- **Scan Library** discovers media and updates availability. A new database is
+  empty until you run it; startup does not scan. Scan Library, Stream, and
+  Clean Up are always available. Recommend, Recommend with Selections, Explore,
+  and Address Other Feedback appear once the catalog contains records.
 - **Favorite** is a lasting preference independent of a response. **Enjoyed it**
   reports enjoyment; **Too soon** pauses recommendations for 72 hours;
-  **Not in the mood** pauses them for 48 hours. **Less often** and **Not for me**
-  apply until restored. Not for me also removes Favorite. **No feedback** closes
-  a clip without rating it.
-- **Something Else** records Remake/Fix/Trim/Hold work and hides the clip until
+  **Not in the mood** pauses them for 48 hours. Each **Less often** response
+  halves its recommendation weight again; Enjoyed it removes one reduction,
+  and Restore normal frequency clears them. **Not for me** excludes the clip
+  until restored and removes Favorite. **No feedback** closes a clip without
+  rating it.
+- **Something Else** records Remake/Fix/Trim work and hides the clip until
   resolved through **Address Other Feedback**.
-- **Refresh Library** checks additions, moves, edits, and deletions. Startup
-  also scans; ordinary browsing uses the stored catalog.
-- **Clean Up** deletes selected unavailable database records, never media files.
-  **Reset Preferences** clears preferences and encounters while retaining the
-  catalog and maintenance tasks. Both save a backup first.
+- **Clean Up** checks catalogued paths for missing files, then lets you delete
+  selected missing records and all their encounter history. It does not
+  discover new files or delete media files.
+- **Reset Library** deletes the catalog, encounters, maintenance flags, and
+  saved settings after a destructive-action warning. It appears when media or
+  encounters exist. Scan Library is needed to repopulate the catalog afterward.
+  Both cleanup deletion and reset save a backup first.
 
 Only one clip can await feedback. Taking control on another device resumes
 that same feedback without reopening the player. Finish it with a response,
 No feedback, or a saved Something Else task. Favorite alone leaves it open.
-Pending feedback, preferences, and cooldowns survive restarts. A browser cookie
-remembers only player and folder choices; it grants no control.
+Pending feedback, preferences, and cooldowns survive restarts. Player and folder
+choices are shared database settings, so another device restores the same
+choices after taking control. The initial player is VLC.
+
+A file's relative path is its identity. Editing or replacing it at that path
+keeps its preferences, encounters, and outstanding work. Moving or renaming it
+creates a new identity; the old path becomes a cleanup candidate. VLC receives
+a stable path-based streaming URL for both catalog and Stream files. The app
+does not save playback positions; iPhone VLC resume still needs a device check.
 
 ## Data, logs, and checks
+
+This version uses a fresh schema with no migration from the former database.
+If upgrading from schema 2, stop the server and remove or move aside the old
+`.pocket-media-manager` directory, then restart and run Scan Library. This does
+not require changing your media files. [Storage details](docs/usage.md#storage-and-backups).
 
 SQLite and the latest seven verified backup snapshots live inside
 `POCKET_MEDIA_MANAGER_MEDIA_ROOT\.pocket-media-manager`. Keep that directory
@@ -110,8 +130,8 @@ with its journal files when backing up stopped app data. Your media stays in
 its existing folders. [Storage and restore details](docs/usage.md#storage-and-backups).
 
 Startup and runtime logs are in repository-level `logs\server.log`, rotated
-at 5 MiB with three previous files. `/health` reports readiness after the
-startup scan. [Design and configuration](docs/design.md) describes the code
+at 5 MiB with three previous files. `/health` reports readiness after database
+initialization. [Design and configuration](docs/design.md) describes the code
 layout and operating conventions.
 
 Run the maintained tests from the repository root:

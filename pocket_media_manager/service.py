@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from urllib.parse import urlencode
 from . import recommender
 from .config import Settings
-from .storage import Database, FeedbackRequired, FEEDBACK
+from .storage import Database, FeedbackRequired, FEEDBACK, normalize_relative_path
 
 
 def _db(request: Request) -> Database:
@@ -60,22 +60,12 @@ def _remember_player(request: Request, player: str | None) -> str:
     if player is not None:
         if player not in {"vlc", "mpv"}:
             raise ValueError("Player must be vlc or mpv")
-        request.state.browser = _db(request).update_browser(request.state.browser_id, player=player)
-    return request.state.browser["player"]
+        request.state.preferences = _db(request).update_preferences(player=player)
+    return request.state.preferences["player"]
 
 
-def _encounter(
-    request: Request, media: dict, source: str, return_path: str, folders: list[str] | None = None
-) -> dict:
-    return _db(request).create_encounter(
-        media["id"],
-        source,
-        {
-            "player": request.state.browser["player"],
-            "folders": folders or [],
-            "return_path": return_path,
-        },
-    )
+def _encounter(request: Request, media: dict, return_path: str) -> dict:
+    return _db(request).create_encounter(media["relative_path"], return_path)
 
 
 def _recommend(request: Request, folders: list[str] | None = None) -> dict:
@@ -91,20 +81,18 @@ def _recommend(request: Request, folders: list[str] | None = None) -> dict:
     while candidates:
         selected = recommender.pick_weighted(candidates)
         try:
-            database.verify_media(selected["id"])
+            database.verify_media(selected["relative_path"])
         except ValueError:
             candidates.remove(selected)
             continue
         return _encounter(
             request,
             selected,
-            "selected" if folders is not None else "recommend",
             "/select" if folders is not None else "/",
-            folders,
         )
     raise ValueError(
         "No eligible media files were found. Use Explore to restore clip preferences, "
-        "or Refresh Library after adding or changing files."
+        "or Scan Library after adding files."
     )
 
 
@@ -113,14 +101,16 @@ def _relative_folder(request: Request, value: str | None, stream: bool = False) 
     root = (
         (settings.media_root / settings.stream_folder).resolve() if stream else settings.media_root
     )
-    target = (root / (value or "")).resolve()
+    relative = normalize_relative_path(value) if value else ""
+    target = (root / relative).resolve()
     if not target.is_relative_to(root) or target.is_relative_to(settings.metadata_root):
         raise ValueError("Folder path is not allowed")
     if not stream and target.is_relative_to(
         (settings.media_root / settings.stream_folder).resolve()
     ):
         raise ValueError("Use Stream for this folder")
-    return target.relative_to(root).as_posix() if target != root else ""
+    # Keep the catalog/link spelling: Windows resolve() can change folder casing.
+    return relative
 
 
 def _browse_url(mode: str, path: str) -> str:

@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import stat
 import uuid
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from threading import RLock
 from typing import Any, Iterator
 
@@ -20,11 +21,32 @@ FEEDBACK = {
     "less_often": "Less often",
     "not_for_me": "Not for me",
 }
-OTHER_FEEDBACK = {"remake": "Remake", "fix": "Fix", "trim": "Trim", "hold": "Hold"}
+OTHER_FEEDBACK = {"remake": "Remake", "fix": "Fix", "trim": "Trim"}
+SCHEMA_VERSION = 3
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def normalize_relative_path(value: str) -> str:
+    """Use slash separators without changing valid filename spelling."""
+    path = PureWindowsPath(value)
+    if not value or path.drive or path.root or ".." in path.parts or not path.parts:
+        raise ValueError("A relative media path is required")
+    return path.as_posix()
+
+
+def _path_key(value: str) -> str:
+    # Windows normcase matches Windows path casing; other platforms retain theirs.
+    return os.path.normcase(normalize_relative_path(value))
+
+
+def _is_link(info: os.stat_result) -> bool:
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    )
 
 
 class Conflict(ValueError):
@@ -46,77 +68,64 @@ class Database:
         self.scan_lock = RLock()
 
     def initialize(self) -> None:
-        if not self.settings.media_root.is_dir():
-            raise OSError(
-                f"POCKET_MEDIA_MANAGER_MEDIA_ROOT is not an available directory: {self.settings.media_root}"
-            )
+        self._require_root()
         self.settings.metadata_root.mkdir(exist_ok=True)
         (self.settings.metadata_root / "backups").mkdir(exist_ok=True)
         with closing(sqlite3.connect(self.path)) as conn:
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 2):
+            if version not in (0, SCHEMA_VERSION):
                 raise ValueError(
                     f"Database version {version} is not supported by this build. "
-                    f"Stop the server and preserve {self.settings.metadata_root}. "
-                    "Use a compatible application version or restore a known-good backup."
+                    "This build requires a fresh database; no migration is provided. "
+                    f"Stop the server and move {self.settings.metadata_root} aside, "
+                    "then start again and use Scan Library. Media files are unchanged."
+                )
+            if (
+                version == 0
+                and conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                ).fetchone()
+            ):
+                raise ValueError(
+                    "An unversioned database already contains tables; use a fresh database"
                 )
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(
                 """
                 BEGIN;
                 CREATE TABLE IF NOT EXISTS media (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    relative_path TEXT NOT NULL,
-                    file_size INTEGER NOT NULL,
-                    modified_ns INTEGER NOT NULL,
-                    discovered_at TEXT NOT NULL,
+                    relative_path TEXT PRIMARY KEY NOT NULL,
                     available INTEGER NOT NULL DEFAULT 1 CHECK(available IN (0,1)),
                     favorite INTEGER NOT NULL DEFAULT 0 CHECK(favorite IN (0,1)),
-                    less_often INTEGER NOT NULL DEFAULT 0 CHECK(less_often IN (0,1)),
-                    not_for_me INTEGER NOT NULL DEFAULT 0 CHECK(not_for_me IN (0,1))
+                    less_often_count INTEGER NOT NULL DEFAULT 0 CHECK(less_often_count >= 0),
+                    not_for_me INTEGER NOT NULL DEFAULT 0 CHECK(not_for_me IN (0,1)),
+                    other_feedback TEXT CHECK(other_feedback IN ('remake','fix','trim'))
                 );
-                CREATE UNIQUE INDEX IF NOT EXISTS media_current_path
-                    ON media(relative_path) WHERE available=1;
                 CREATE TABLE IF NOT EXISTS encounters (
-                    id TEXT PRIMARY KEY,
-                    media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                    id TEXT PRIMARY KEY NOT NULL,
+                    media_path TEXT NOT NULL REFERENCES media(relative_path) ON DELETE CASCADE,
                     selected_at TEXT NOT NULL,
-                    source TEXT NOT NULL CHECK(source IN ('recommend','selected','explore','test')),
-                    context TEXT NOT NULL,
-                    playback_requested_at TEXT,
+                    feedback TEXT CHECK(feedback IN
+                        ('enjoyed','too_soon','not_in_mood','less_often','not_for_me',
+                         'no_feedback','remake','fix','trim')),
+                    closed_at TEXT,
+                    return_path TEXT NOT NULL,
                     launch_status TEXT NOT NULL DEFAULT 'not_requested'
                         CHECK(launch_status IN ('not_requested','requested','failed')),
-                    launch_error TEXT,
-                    feedback TEXT CHECK(feedback IN
-                        ('enjoyed','too_soon','not_in_mood','less_often','not_for_me')),
-                    resolution TEXT NOT NULL DEFAULT 'open'
-                        CHECK(resolution IN ('open','answered','no_feedback','other_feedback')),
-                    closed_at TEXT,
-                    CHECK((resolution='open') = (closed_at IS NULL)),
-                    CHECK((resolution='answered') = (feedback IS NOT NULL))
+                    CHECK((feedback IS NULL) = (closed_at IS NULL))
                 );
-                CREATE INDEX IF NOT EXISTS encounter_media ON encounters(media_id,selected_at);
-                CREATE INDEX IF NOT EXISTS encounter_open ON encounters(selected_at,id)
-                    WHERE resolution='open';
-                CREATE TABLE IF NOT EXISTS other_feedback (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
-                    type TEXT NOT NULL CHECK(type IN ('remake','fix','trim','hold')),
-                    created_at TEXT NOT NULL,
-                    resolved_at TEXT
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS unresolved_task
-                    ON other_feedback(media_id) WHERE resolved_at IS NULL;
+                CREATE INDEX IF NOT EXISTS encounter_media ON encounters(media_path,selected_at);
+                CREATE UNIQUE INDEX IF NOT EXISTS encounter_open ON encounters((1))
+                    WHERE closed_at IS NULL;
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                UPDATE media SET favorite=0 WHERE not_for_me=1 AND favorite=1;
-                PRAGMA user_version=2;
+                PRAGMA user_version=3;
                 COMMIT;
-            """
+                """
             )
 
     @contextmanager
     def connect(self, write: bool = False) -> Iterator[sqlite3.Connection]:
-        # mode=rw avoids silently creating a replacement database if the drive disappears.
+        # mode=rw avoids silently replacing a database when its drive disappears.
         with closing(
             sqlite3.connect(
                 self.path.as_uri() + "?mode=rw", uri=True, timeout=5, isolation_level=None
@@ -147,40 +156,65 @@ class Database:
             (key, json.dumps(value)),
         )
 
-    def browser(self, browser_id: str) -> dict[str, Any]:
-        key = "browser:" + browser_id
+    def preferences(self) -> dict[str, Any]:
+        defaults = {"player": "vlc", "folders": []}
         with self.connect() as conn:
-            value = self._setting(conn, key)
-        if value is None:
+            result = {key: self._setting(conn, key) for key in defaults}
+        if any(value is None for value in result.values()):
             with self.connect(write=True) as conn:
-                value = self._setting(conn, key)
-                if value is None:
-                    value = {"player": "vlc", "folders": []}
-                    self._save_setting(conn, key, value)
-        return value
+                for key, default in defaults.items():
+                    # Recheck under the write lock before creating a missing default.
+                    value = self._setting(conn, key)
+                    if value is None:
+                        value = default
+                        self._save_setting(conn, key, value)
+                    result[key] = value
+        return result
 
-    def update_browser(self, browser_id: str, **changes: Any) -> dict[str, Any]:
+    def update_preferences(self, **changes: Any) -> dict[str, Any]:
+        if changes.keys() - {"player", "folders"}:
+            raise ValueError("Unknown preference")
+        if "player" in changes and changes["player"] not in {"vlc", "mpv"}:
+            raise ValueError("Player must be vlc or mpv")
+        if "folders" in changes:
+            if not isinstance(changes["folders"], list) or not all(
+                isinstance(folder, str) for folder in changes["folders"]
+            ):
+                raise ValueError("Folders must be a list of relative paths")
+            changes["folders"] = list(
+                dict.fromkeys(normalize_relative_path(folder) for folder in changes["folders"])
+            )
         with self.connect(write=True) as conn:
             self.require_idle(conn)
-            value = self._setting(conn, "browser:" + browser_id)
-            value.update(changes)
-            self._save_setting(conn, "browser:" + browser_id, value)
-        return value
+            for key, value in changes.items():
+                self._save_setting(conn, key, value)
+        return self.preferences()
 
-    def refresh_catalog(self, *, allow_pending: bool = False) -> int:
+    def library_state(self) -> dict[str, bool]:
+        """Only table emptiness is needed to choose Home actions."""
+        with self.connect() as conn:
+            return {
+                "has_media": conn.execute("SELECT 1 FROM media LIMIT 1").fetchone() is not None,
+                "has_encounters": conn.execute("SELECT 1 FROM encounters LIMIT 1").fetchone()
+                is not None,
+            }
+
+    def _require_root(self) -> None:
+        info = self.settings.media_root.stat()
+        if not stat.S_ISDIR(info.st_mode):
+            raise OSError("The media directory is unavailable; the previous catalog was preserved")
+
+    def scan_catalog(self) -> int:
         with self.scan_lock:
+            self._require_root()
             root = self.settings.media_root
-            if not root.is_dir():
-                raise OSError(
-                    "The media directory is unavailable; the previous catalog was preserved"
-                )
             stream_root = (root / self.settings.stream_folder).resolve()
-            found: dict[str, tuple[int, int]] = {}
+            found: list[str] = []
 
             def scan_error(error: OSError) -> None:
                 raise error
 
-            # Complete the scan before changing availability; a partial/failed scan changes nothing.
+            # Complete every filesystem check before changing the stored catalog.
             for directory, folders, filenames in os.walk(
                 root, followlinks=False, onerror=scan_error
             ):
@@ -188,53 +222,46 @@ class Database:
                 folders[:] = [
                     name
                     for name in folders
-                    if not (parent / name).is_symlink()
+                    if not _is_link((parent / name).lstat())
                     and (parent / name) != self.settings.metadata_root
                     and (parent / name) != stream_root
                 ]
                 for name in filenames:
                     path = parent / name
-                    if (
-                        path.suffix.lower() not in self.settings.supported_extensions
-                        or path.is_symlink()
-                    ):
+                    if path.suffix.lower() not in self.settings.supported_extensions:
                         continue
-                    stat = path.stat()
-                    if path.is_file():
-                        found[path.relative_to(root).as_posix()] = (stat.st_size, stat.st_mtime_ns)
-            timestamp = now_iso()
+                    info = path.lstat()
+                    if not _is_link(info) and stat.S_ISREG(info.st_mode):
+                        found.append(path.relative_to(root).as_posix())
+            self._require_root()
             with self.connect(write=True) as conn:
-                if not allow_pending:
-                    self.require_idle(conn)
+                self.require_idle(conn)
                 previous = {
-                    row["relative_path"]: row
-                    for row in conn.execute("SELECT * FROM media ORDER BY id")
+                    _path_key(row["relative_path"]): row["relative_path"]
+                    for row in conn.execute("SELECT relative_path FROM media")
                 }
                 conn.execute("UPDATE media SET available=0 WHERE available=1")
-                for path, (size, modified) in found.items():
-                    old = previous.get(path)
-                    if old and old["file_size"] == size and old["modified_ns"] == modified:
-                        conn.execute("UPDATE media SET available=1 WHERE id=?", (old["id"],))
-                    else:
-                        conn.execute(
-                            """INSERT INTO media
-                            (relative_path,file_size,modified_ns,discovered_at) VALUES (?,?,?,?)""",
-                            (path, size, modified, timestamp),
-                        )
-                self._save_setting(conn, "last_catalog_refresh", timestamp)
+                for path in found:
+                    # Reuse the first catalogued spelling when Windows casing changes.
+                    path = previous.get(_path_key(path), path)
+                    conn.execute(
+                        """INSERT INTO media (relative_path) VALUES (?)
+                        ON CONFLICT(relative_path) DO UPDATE SET available=1""",
+                        (path,),
+                    )
             return len(found)
 
     def media_rows(
         self, include_blocked: bool = False, unavailable: bool = False
     ) -> list[dict[str, Any]]:
-        where = "m.available=0" if unavailable else "m.available=1"
+        where = "available=0" if unavailable else "available=1"
         if not include_blocked:
-            where += " AND NOT EXISTS (SELECT 1 FROM other_feedback o WHERE o.media_id=m.id AND o.resolved_at IS NULL)"
+            where += " AND other_feedback IS NULL"
         with self.connect() as conn:
             return [
                 dict(row)
                 for row in conn.execute(
-                    f"SELECT m.* FROM media m WHERE {where} ORDER BY m.relative_path COLLATE NOCASE"
+                    f"SELECT * FROM media WHERE {where} ORDER BY relative_path COLLATE NOCASE"
                 )
             ]
 
@@ -247,88 +274,125 @@ class Database:
                     h.last_enjoyed_at, h.last_offered_at, h.last_too_soon_at,
                     h.last_not_in_mood_at
                 FROM media m LEFT JOIN (
-                    SELECT media_id,
+                    SELECT media_path,
                         SUM(feedback='enjoyed') AS enjoyed_count,
                         MAX(CASE WHEN feedback='enjoyed' THEN closed_at END) AS last_enjoyed_at,
                         MAX(CASE WHEN launch_status='requested' THEN selected_at END) AS last_offered_at,
                         MAX(CASE WHEN feedback='too_soon' THEN closed_at END) AS last_too_soon_at,
                         MAX(CASE WHEN feedback='not_in_mood' THEN closed_at END) AS last_not_in_mood_at
-                    FROM encounters WHERE source!='test' GROUP BY media_id
-                ) h ON h.media_id=m.id
-                WHERE m.available=1 AND m.not_for_me=0
-                    AND NOT EXISTS (SELECT 1 FROM other_feedback o
-                                    WHERE o.media_id=m.id AND o.resolved_at IS NULL)
+                    FROM encounters GROUP BY media_path
+                ) h ON h.media_path=m.relative_path
+                WHERE m.available=1 AND m.not_for_me=0 AND m.other_feedback IS NULL
                 ORDER BY m.relative_path COLLATE NOCASE
-            """
+                """
             )
             return [dict(row) for row in rows]
 
-    def media(self, media_id: int) -> dict[str, Any]:
+    def media(self, media_path: str) -> dict[str, Any]:
+        media_path = normalize_relative_path(media_path)
         with self.connect() as conn:
-            row = conn.execute("SELECT * FROM media WHERE id=?", (media_id,)).fetchone()
-            if not row:
+            row = conn.execute(
+                "SELECT * FROM media WHERE relative_path=?", (media_path,)
+            ).fetchone()
+            if row is None and os.name == "nt":
+                key = _path_key(media_path)
+                row = next(
+                    (
+                        item
+                        for item in conn.execute("SELECT * FROM media")
+                        if _path_key(item["relative_path"]) == key
+                    ),
+                    None,
+                )
+            if row is None:
                 raise KeyError("Media record not found")
             return dict(row)
 
-    def blocked(self, media_id: int) -> bool:
-        with self.connect() as conn:
-            return (
-                conn.execute(
-                    "SELECT 1 FROM other_feedback WHERE media_id=? AND resolved_at IS NULL",
-                    (media_id,),
-                ).fetchone()
-                is not None
-            )
+    def blocked(self, media_path: str) -> bool:
+        return self.media(media_path)["other_feedback"] is not None
 
-    def verify_media(self, media_id: int) -> Path:
-        media = self.media(media_id)
+    def _catalog_path(self, media_path: str) -> Path:
         root = self.settings.media_root
-        path = (root / media["relative_path"]).resolve()
+        path = root / normalize_relative_path(media_path)
+        resolved = path.resolve()
         if (
-            not path.is_relative_to(root)
-            or path.is_relative_to(self.settings.metadata_root)
-            or path.is_relative_to((root / self.settings.stream_folder).resolve())
+            not resolved.is_relative_to(root)
+            or resolved.is_relative_to(self.settings.metadata_root)
+            or resolved.is_relative_to((root / self.settings.stream_folder).resolve())
         ):
             raise ValueError("Media path is not allowed")
+        # Do not start following links or Windows junctions after cataloguing.
+        for component in (*reversed(path.relative_to(root).parents), path.relative_to(root)):
+            if _is_link((root / component).lstat()):
+                raise ValueError("Linked media is not allowed")
+        return path
+
+    def verify_media(self, media_path: str) -> Path:
+        media = self.media(media_path)
+        if not media["available"]:
+            raise ValueError("File is unavailable; use Scan Library")
+        self._require_root()
         try:
-            stat = path.stat()
-        except FileNotFoundError:
+            path = self._catalog_path(media["relative_path"])
+            info = path.stat()
+        except (FileNotFoundError, NotADirectoryError):
             with self.connect(write=True) as conn:
-                conn.execute("UPDATE media SET available=0 WHERE id=?", (media_id,))
-            raise ValueError("File was removed; refresh the library") from None
+                conn.execute(
+                    "UPDATE media SET available=0 WHERE relative_path=?", (media["relative_path"],)
+                )
+            raise ValueError("File was removed; use Scan Library") from None
         if (
-            not media["available"]
-            or not path.is_file()
-            or stat.st_size != media["file_size"]
-            or stat.st_mtime_ns != media["modified_ns"]
+            not stat.S_ISREG(info.st_mode)
             or path.suffix.lower() not in self.settings.supported_extensions
         ):
             with self.connect(write=True) as conn:
-                conn.execute("UPDATE media SET available=0 WHERE id=?", (media_id,))
-            raise ValueError("File changed; refresh the library to catalogue its new record")
+                conn.execute(
+                    "UPDATE media SET available=0 WHERE relative_path=?", (media["relative_path"],)
+                )
+            raise ValueError("File is unavailable; use Scan Library")
         return path
 
-    def create_encounter(
-        self, media_id: int, source: str, context: dict[str, Any]
-    ) -> dict[str, Any]:
-        if source not in {"recommend", "selected", "explore"}:
-            raise ValueError("Unknown encounter source")
+    def check_available_paths(self) -> None:
+        """Check catalogued paths only; discover nothing and commit no partial check."""
+        with self.scan_lock:
+            self._require_root()
+            with self.connect() as conn:
+                self.require_idle(conn)
+                paths = [
+                    row[0]
+                    for row in conn.execute("SELECT relative_path FROM media WHERE available=1")
+                ]
+            missing = []
+            for media_path in paths:
+                try:
+                    info = self._catalog_path(media_path).stat()
+                    if not stat.S_ISREG(info.st_mode):
+                        missing.append(media_path)
+                except (FileNotFoundError, NotADirectoryError, ValueError):
+                    missing.append(media_path)
+            self._require_root()
+            with self.connect(write=True) as conn:
+                self.require_idle(conn)
+                conn.executemany(
+                    "UPDATE media SET available=0 WHERE relative_path=?",
+                    [(path,) for path in missing],
+                )
+
+    def create_encounter(self, media_path: str, return_path: str) -> dict[str, Any]:
+        media_path = self.media(media_path)["relative_path"]
         encounter_id = uuid.uuid4().hex
         with self.connect(write=True) as conn:
             self.require_idle(conn)
             conn.execute(
-                """INSERT INTO encounters
-                (id,media_id,selected_at,source,context) VALUES (?,?,?,?,?)""",
-                (encounter_id, media_id, now_iso(), source, json.dumps(context)),
+                """INSERT INTO encounters (id,media_path,selected_at,return_path)
+                VALUES (?,?,?,?)""",
+                (encounter_id, media_path, now_iso(), return_path),
             )
         return self.encounter(encounter_id)
 
     @staticmethod
     def _pending_id(conn: sqlite3.Connection) -> str | None:
-        row = conn.execute(
-            """SELECT id FROM encounters WHERE resolution='open'
-            ORDER BY selected_at DESC,id DESC LIMIT 1"""
-        ).fetchone()
+        row = conn.execute("SELECT id FROM encounters WHERE closed_at IS NULL LIMIT 1").fetchone()
         return row[0] if row else None
 
     def require_idle(self, conn: sqlite3.Connection) -> None:
@@ -338,36 +402,25 @@ class Database:
 
     @contextmanager
     def idle(self) -> Iterator[sqlite3.Connection]:
-        # Keep the check and the operation together, including new direct-stream launches.
         with self.connect(write=True) as conn:
             self.require_idle(conn)
             yield conn
 
     def pending_encounter(self) -> dict[str, Any] | None:
         with self.connect() as conn:
-            row = conn.execute(
-                """SELECT e.*,m.relative_path,m.favorite FROM encounters e
-                JOIN media m ON m.id=e.media_id WHERE e.resolution='open'
-                ORDER BY e.selected_at DESC,e.id DESC LIMIT 1"""
-            ).fetchone()
-            return self._encounter_dict(row) if row else None
-
-    @staticmethod
-    def _encounter_dict(row: sqlite3.Row) -> dict[str, Any]:
-        result = dict(row)
-        result["context"] = json.loads(result["context"])
-        return result
+            identifier = self._pending_id(conn)
+        return self.encounter(identifier) if identifier else None
 
     def encounter(self, encounter_id: str) -> dict[str, Any]:
         with self.connect() as conn:
             row = conn.execute(
                 """SELECT e.*,m.relative_path,m.favorite FROM encounters e
-                JOIN media m ON m.id=e.media_id WHERE e.id=?""",
+                JOIN media m ON m.relative_path=e.media_path WHERE e.id=?""",
                 (encounter_id,),
             ).fetchone()
             if not row:
                 raise KeyError("Encounter not found")
-            return self._encounter_dict(row)
+            return dict(row)
 
     def latest_encounter(self) -> dict[str, Any] | None:
         with self.connect() as conn:
@@ -378,19 +431,15 @@ class Database:
 
     def _require_open(self, conn: sqlite3.Connection, encounter_id: str) -> None:
         row = conn.execute(
-            "SELECT resolution FROM encounters WHERE id=?", (encounter_id,)
+            "SELECT closed_at FROM encounters WHERE id=?", (encounter_id,)
         ).fetchone()
         if not row:
             raise KeyError("Encounter not found")
-        if row[0] != "open":
+        if row[0] is not None:
             raise Conflict("This encounter is already closed; open the clip again through Explore")
-        pending = self._pending_id(conn)
-        if pending and pending != encounter_id:
-            raise FeedbackRequired(pending)
 
     @contextmanager
     def playback(self, encounter_id: str) -> Iterator[sqlite3.Connection]:
-        # Closing feedback must wait until its player launch has finished, and vice versa.
         with self.connect(write=True) as conn:
             self._require_open(conn, encounter_id)
             yield conn
@@ -398,35 +447,54 @@ class Database:
     @staticmethod
     def mark_launch(conn: sqlite3.Connection, encounter_id: str, error: str | None = None) -> None:
         conn.execute(
-            """UPDATE encounters SET playback_requested_at=?,launch_status=?,launch_error=?
-            WHERE id=?""",
-            (now_iso(), "failed" if error else "requested", error, encounter_id),
+            "UPDATE encounters SET launch_status=? WHERE id=?",
+            ("failed" if error else "requested", encounter_id),
         )
 
     def submit_feedback(self, encounter_id: str, feedback: str) -> dict[str, Any]:
         if feedback not in FEEDBACK and feedback != "no_feedback":
             raise ValueError("Unknown feedback")
-        resolution = "no_feedback" if feedback == "no_feedback" else "answered"
-        response = None if feedback == "no_feedback" else feedback
+        return self._close_encounter(encounter_id, feedback)
+
+    def _close_encounter(self, encounter_id: str, feedback: str) -> dict[str, Any]:
         with self.connect(write=True) as conn:
             row = conn.execute("SELECT * FROM encounters WHERE id=?", (encounter_id,)).fetchone()
             if not row:
                 raise KeyError("Encounter not found")
-            if row["resolution"] != "open":
-                if row["resolution"] != resolution or row["feedback"] != response:
+            if row["closed_at"] is not None:
+                if row["feedback"] != feedback:
                     raise Conflict("This encounter already has a different response")
             else:
-                self._require_open(conn, encounter_id)
-                conn.execute(
-                    "UPDATE encounters SET feedback=?,resolution=?,closed_at=? WHERE id=?",
-                    (response, resolution, now_iso(), encounter_id),
-                )
-                if feedback == "not_for_me":
+                if feedback in OTHER_FEEDBACK:
+                    media = conn.execute(
+                        "SELECT other_feedback FROM media WHERE relative_path=?",
+                        (row["media_path"],),
+                    ).fetchone()
+                    if media[0] is not None:
+                        raise Conflict("This clip already has outstanding Something Else feedback")
                     conn.execute(
-                        "UPDATE media SET not_for_me=1,favorite=0 WHERE id=?", (row["media_id"],)
+                        "UPDATE media SET other_feedback=? WHERE relative_path=?",
+                        (feedback, row["media_path"]),
+                    )
+                elif feedback == "not_for_me":
+                    conn.execute(
+                        "UPDATE media SET not_for_me=1,favorite=0 WHERE relative_path=?",
+                        (row["media_path"],),
                     )
                 elif feedback == "less_often":
-                    conn.execute("UPDATE media SET less_often=1 WHERE id=?", (row["media_id"],))
+                    conn.execute(
+                        "UPDATE media SET less_often_count=less_often_count+1 WHERE relative_path=?",
+                        (row["media_path"],),
+                    )
+                elif feedback == "enjoyed":
+                    conn.execute(
+                        "UPDATE media SET less_often_count=MAX(0,less_often_count-1) WHERE relative_path=?",
+                        (row["media_path"],),
+                    )
+                conn.execute(
+                    "UPDATE encounters SET feedback=?,closed_at=? WHERE id=?",
+                    (feedback, now_iso(), encounter_id),
+                )
         return self.encounter(encounter_id)
 
     def preference_for_encounter(self, encounter_id: str, preference: str, enabled: bool) -> None:
@@ -434,92 +502,75 @@ class Database:
             raise ValueError("Unknown preference")
         with self.connect(write=True) as conn:
             self._require_open(conn, encounter_id)
-            row = conn.execute("SELECT * FROM encounters WHERE id=?", (encounter_id,)).fetchone()
+            row = conn.execute(
+                "SELECT media_path FROM encounters WHERE id=?", (encounter_id,)
+            ).fetchone()
             if preference == "favorite" and enabled:
                 media = conn.execute(
-                    "SELECT not_for_me FROM media WHERE id=?", (row["media_id"],)
+                    "SELECT not_for_me FROM media WHERE relative_path=?", (row["media_path"],)
                 ).fetchone()
-                if media["not_for_me"]:
+                if media[0]:
                     raise Conflict(
                         "Allow recommendations again before marking this clip as Favorite"
                     )
-            if preference == "not_for_me" and enabled:
+            if preference == "less_often":
+                if enabled:
+                    raise ValueError("Use Less often feedback to increase the frequency penalty")
                 conn.execute(
-                    "UPDATE media SET not_for_me=1,favorite=0 WHERE id=?", (row["media_id"],)
+                    "UPDATE media SET less_often_count=0 WHERE relative_path=?",
+                    (row["media_path"],),
+                )
+            elif preference == "not_for_me" and enabled:
+                conn.execute(
+                    "UPDATE media SET not_for_me=1,favorite=0 WHERE relative_path=?",
+                    (row["media_path"],),
                 )
             else:
                 conn.execute(
-                    f"UPDATE media SET {preference}=? WHERE id=?", (int(enabled), row["media_id"])
+                    f"UPDATE media SET {preference}=? WHERE relative_path=?",
+                    (int(enabled), row["media_path"]),
                 )
 
     def submit_other(self, encounter_id: str, feedback_type: str) -> dict[str, Any]:
         if feedback_type not in OTHER_FEEDBACK:
             raise ValueError("Unknown maintenance type")
-        with self.connect(write=True) as conn:
-            row = conn.execute("SELECT * FROM encounters WHERE id=?", (encounter_id,)).fetchone()
-            if not row:
-                raise KeyError("Encounter not found")
-            if row["resolution"] == "other_feedback":
-                if json.loads(row["context"]).get("other_feedback_type") != feedback_type:
-                    raise Conflict("This encounter already has a different maintenance response")
-            elif row["resolution"] != "open":
-                raise Conflict("This encounter is already closed")
-            else:
-                self._require_open(conn, encounter_id)
-                if conn.execute(
-                    "SELECT 1 FROM other_feedback WHERE media_id=? AND resolved_at IS NULL",
-                    (row["media_id"],),
-                ).fetchone():
-                    raise Conflict("This clip already has outstanding Something Else feedback")
-                timestamp = now_iso()
-                conn.execute(
-                    "INSERT INTO other_feedback (media_id,type,created_at) VALUES (?,?,?)",
-                    (row["media_id"], feedback_type, timestamp),
-                )
-                context = json.loads(row["context"])
-                context["other_feedback_type"] = feedback_type
-                conn.execute(
-                    "UPDATE encounters SET resolution='other_feedback',closed_at=?,context=? WHERE id=?",
-                    (timestamp, json.dumps(context), encounter_id),
-                )
-        return self.encounter(encounter_id)
+        return self._close_encounter(encounter_id, feedback_type)
 
     def tasks(self) -> list[dict[str, Any]]:
         with self.connect() as conn:
             return [
                 dict(row)
                 for row in conn.execute(
-                    """SELECT o.*,m.relative_path
-                FROM other_feedback o JOIN media m ON m.id=o.media_id
-                WHERE resolved_at IS NULL ORDER BY m.relative_path COLLATE NOCASE"""
+                    "SELECT * FROM media WHERE other_feedback IS NOT NULL ORDER BY relative_path COLLATE NOCASE"
                 )
             ]
 
-    def resolve_tasks(self, task_ids: list[int]) -> None:
+    def resolve_tasks(self, media_paths: list[str]) -> None:
+        paths = [self.media(path)["relative_path"] for path in media_paths]
         with self.connect(write=True) as conn:
             self.require_idle(conn)
             conn.executemany(
-                "UPDATE other_feedback SET resolved_at=? WHERE id=? AND resolved_at IS NULL",
-                [(now_iso(), task_id) for task_id in task_ids],
+                "UPDATE media SET other_feedback=NULL WHERE relative_path=?",
+                [(path,) for path in paths],
             )
 
-    def cleanup(self, media_ids: list[int]) -> None:
+    def cleanup(self, media_paths: list[str]) -> None:
+        paths = [self.media(path)["relative_path"] for path in media_paths]
         self.backup()
         with self.connect(write=True) as conn:
             self.require_idle(conn)
             conn.executemany(
-                """DELETE FROM media WHERE id=? AND available=0
-                AND NOT EXISTS (SELECT 1 FROM other_feedback
-                    WHERE media_id=media.id AND resolved_at IS NULL)""",
-                [(item,) for item in media_ids],
+                "DELETE FROM media WHERE relative_path=? AND available=0",
+                [(path,) for path in paths],
             )
 
-    def reset_preferences(self) -> None:
+    def reset_library(self) -> None:
         self.backup()
         with self.connect(write=True) as conn:
             self.require_idle(conn)
             conn.execute("DELETE FROM encounters")
-            conn.execute("UPDATE media SET favorite=0,less_often=0,not_for_me=0")
+            conn.execute("DELETE FROM media")
+            conn.execute("DELETE FROM settings")
 
     def backup(self, daily: bool = False) -> Path | None:
         with self.scan_lock:
@@ -539,7 +590,6 @@ class Database:
                             raise sqlite3.DatabaseError(
                                 "The database snapshot failed its integrity check"
                             )
-                    # Windows only flushes handles opened for writing; "rb" fails with EBADF.
                     with temporary.open("r+b") as snapshot:
                         os.fsync(snapshot.fileno())
                     os.replace(temporary, target)
@@ -547,7 +597,6 @@ class Database:
                     temporary.unlink(missing_ok=True)
             with self.connect(write=True) as conn:
                 self._save_setting(conn, "last_backup_date", today)
-            # Only rotate snapshots created by this app, inside its dedicated folder.
             for old in sorted(folder.glob("backup-*.sqlite3"))[:-7]:
                 if old.is_file() and not old.is_symlink():
                     old.unlink()

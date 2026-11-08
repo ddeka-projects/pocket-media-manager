@@ -6,10 +6,9 @@ from urllib.parse import urlencode
 from html import escape
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
-from . import state
 from .health import make_health
-from .streaming import media_response
-from .storage import Conflict, FEEDBACK, OTHER_FEEDBACK
+from .streaming import media_response, open_media
+from .storage import Conflict, FEEDBACK, OTHER_FEEDBACK, normalize_relative_path
 from .service import (
     _db,
     _settings,
@@ -40,7 +39,7 @@ from .presentation import (
     SHUFFLE_ICON,
     STREAM_ICON,
 )
-from .playback import _launch, _launch_mpv, build_vlc_url
+from .playback import _launch, _launch_mpv, build_stream_url, build_vlc_url
 
 router = APIRouter()
 APP_ICON_PATH = Path(__file__).resolve().parents[1] / "pocket-manager-icon.png"
@@ -72,37 +71,43 @@ def web_manifest() -> dict:
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    player = request.state.browser["player"]
-    selected = len(request.state.browser["folders"])
+    player = request.state.preferences["player"]
+    selected = len(request.state.preferences["folders"])
+    library = _db(request).library_state()
     body = '<h1>Pocket Media Manager</h1><div class="player-toggle">'
     for value, label in (("vlc", "VLC (Phone)"), ("mpv", "mpv (PC)")):
         body += f'<button type="button" class="{"active" if player == value else ""}" data-player="{value}">{label}</button>'
     # app.js keeps the hidden player input in step with the switch above.
-    body += f"""</div><div class="home-cards"><form method="post" action="/recommend">
+    body += '</div><div class="home-cards">'
+    if library["has_media"]:
+        body += f"""<form method="post" action="/recommend">
 <input type="hidden" name="player" value="{escape(player, quote=True)}">
 <button class="explore-card home-hero">{SHUFFLE_ICON}
 <span class="explore-content"><span class="explore-name">Recommend</span>
 <span class="explore-detail">Pick something from the whole library</span></span></button></form>"""
-    body += _home_card(
-        "/select",
-        CHECKLIST_ICON,
-        "Recommend with Selections",
-        (
-            f"{selected} folder{'' if selected == 1 else 's'} selected"
-            if selected
-            else "Only from folders you choose"
-        ),
-    )
-    body += _home_card("/explore", FOLDER_ICON, "Explore", "Browse the library folder by folder")
+        body += _home_card(
+            "/select",
+            CHECKLIST_ICON,
+            "Recommend with Selections",
+            (
+                f"{selected} folder{'' if selected == 1 else 's'} selected"
+                if selected
+                else "Only from folders you choose"
+            ),
+        )
+        body += _home_card(
+            "/explore", FOLDER_ICON, "Explore", "Browse the library folder by folder"
+        )
     body += _home_card("/stream", STREAM_ICON, "Stream", "Play files from the Stream folder")
-    body += '</div><h2 class="section-label">Maintenance</h2><div class="maintenance">'
-    for url, label in (
-        ("/feedback/addressed", "Address Other Feedback"),
-        ("/cleanup", "Clean Up"),
-        ("/reset", "Reset Preferences"),
-    ):
-        body += _link(url, label, "compact")
-    body += _form("/library/refresh", "Refresh Library", kind="compact")
+    body += "</div>" + _form(
+        "/library/scan", "Scan Library", kind="" if library["has_media"] else "primary"
+    )
+    body += '<h2 class="section-label">Maintenance</h2><div class="maintenance">'
+    if library["has_media"]:
+        body += _link("/feedback/addressed", "Address Other Feedback", "compact")
+    body += _form("/cleanup/check", "Clean Up", kind="compact")
+    if library["has_media"] or library["has_encounters"]:
+        body += _link("/reset", "Reset Library", "compact")
     settings = _settings(request)
     body += f"""</div><dl class="locations">
 <dt>Library</dt><dd>{escape(str(settings.media_root))}</dd>
@@ -115,9 +120,9 @@ def remember_player(request: Request, player: str = Form(...)) -> dict:
     return {"player": _remember_player(request, player)}
 
 
-@router.post("/library/refresh")
-def refresh_library(request: Request):
-    count = _db(request).refresh_catalog()
+@router.post("/library/scan")
+def scan_library(request: Request):
+    count = _db(request).scan_catalog()
     _db(request).backup(daily=True)
     return RedirectResponse("/", 303) if _html(request) else {"media_count": count}
 
@@ -149,7 +154,7 @@ def select_folders(request: Request):
         row["relative_path"].split("/", 1)[0] for row in rows if "/" in row["relative_path"]
     )
     folders = sorted(clips, key=str.lower)
-    selected = set(request.state.browser["folders"])
+    selected = set(request.state.preferences["folders"])
     body = '<h1>Recommend with Selections</h1><div class="toolbar">'
     body += '<button class="primary" form="selection-form">Recommend</button>'
     body += _link("/", "Home", "pill") + "</div>"
@@ -159,13 +164,13 @@ def select_folders(request: Request):
         body += _select_folder(folder, clips[folder], folder in selected)
     body += "</form>" + _form("/select/cancel", "Cancel and Clear Selections", kind="quiet")
     if not folders:
-        body += "<p>No eligible folders found. Refresh Library after adding media.</p>"
+        body += "<p>No eligible folders found. Scan Library after adding media.</p>"
     return _page("Select Folders", body)
 
 
 @router.post("/select/cancel")
 def cancel_selections(request: Request):
-    _db(request).update_browser(request.state.browser_id, folders=[])
+    _db(request).update_preferences(folders=[])
     return RedirectResponse("/", 303)
 
 
@@ -181,7 +186,7 @@ def recommend_selected(request: Request, folders: list[str] = Form(default=[])):
     folders = list(dict.fromkeys(folder for folder in folders if folder in allowed))
     if not folders:
         raise ValueError("Select at least one available folder")
-    _db(request).update_browser(request.state.browser_id, folders=folders)
+    _db(request).update_preferences(folders=folders)
     encounter = _recommend(request, folders)
     return _feedback_page(request, encounter, _launch(request, encounter))
 
@@ -213,19 +218,19 @@ def explore(request: Request, path: str | None = None):
     if files:
         body += _explore_section("clips", "Clips", [_explore_file(row) for row in files])
     if not folders and not files:
-        body += "<p>No eligible media here. Refresh Library after adding files.</p>"
+        body += "<p>No eligible media here. Scan Library after adding files.</p>"
     return _page("Explore", body)
 
 
 @router.post("/explore/play", response_class=HTMLResponse)
-def play_explored(request: Request, media_id: int = Form(...)):
+def play_explored(request: Request, media_path: str = Form(...)):
     database = _db(request)
-    media = database.media(media_id)
-    database.verify_media(media_id)
-    if database.blocked(media_id):
+    media = database.media(media_path)
+    database.verify_media(media["relative_path"])
+    if database.blocked(media["relative_path"]):
         raise ValueError("This file has outstanding Something Else feedback")
     parent = media["relative_path"].rsplit("/", 1)[0] if "/" in media["relative_path"] else ""
-    encounter = _encounter(request, media, "explore", _browse_url("explore", parent))
+    encounter = _encounter(request, media, _browse_url("explore", parent))
     return _feedback_page(request, encounter, _launch(request, encounter))
 
 
@@ -263,37 +268,39 @@ def stream_browse(request: Request, path: str | None = None):
 
 @router.post("/stream/play")
 def stream_play(request: Request, path: str = Form(...)) -> dict:
-    relative = _relative_folder(request, path, stream=True)
-    target = (_settings(request).media_root / _settings(request).stream_folder / relative).resolve()
-    if not target.is_file() or target.suffix.lower() not in _settings(request).supported_extensions:
+    settings = _settings(request)
+    relative = normalize_relative_path(path)
+    media_path = normalize_relative_path(settings.stream_folder + "/" + relative)
+    target = settings.media_root / media_path
+    if target.suffix.lower() not in settings.supported_extensions:
         raise ValueError("Stream file not found or unsupported")
     with _db(request).idle():
-        if request.state.browser["player"] == "mpv":
-            _launch_mpv(_settings(request), target)
+        stream, _ = open_media(settings.media_root, settings.metadata_root, target)
+        stream.close()
+        if request.state.preferences["player"] == "mpv":
+            _launch_mpv(settings, target)
             return {"launched": True}
-        token = state.create_stream_token(target)
-        return {"player_url": build_vlc_url(f"{_settings(request).public_base_url}/stream/{token}")}
+        return {"player_url": build_vlc_url(build_stream_url(settings, media_path))}
 
 
-@router.get("/stream/{token}")
-@router.head("/stream/{token}")
-def stream_media(request: Request, token: str):
-    path = state.get_stream_path(token)
+@router.get("/media/{relative_path:path}")
+@router.head("/media/{relative_path:path}")
+def stream_media(request: Request, relative_path: str):
     settings = _settings(request)
-    if (
-        path is None
-        or not path.resolve().is_relative_to(settings.media_root)
-        or path.resolve().is_relative_to(settings.metadata_root)
-        or not path.is_file()
-    ):
-        raise HTTPException(404, "Playback link expired or file unavailable")
+    try:
+        relative = normalize_relative_path(relative_path)
+    except ValueError:
+        raise HTTPException(404, "Media file unavailable") from None
+    path = settings.media_root / relative
+    if path.suffix.lower() not in settings.supported_extensions:
+        raise HTTPException(404, "Media file unavailable")
     return media_response(settings.media_root, settings.metadata_root, path, request)
 
 
 @router.post("/encounters/{encounter_id}/play", response_class=HTMLResponse)
 def replay_encounter(request: Request, encounter_id: str):
     encounter = _db(request).encounter(encounter_id)
-    if encounter["resolution"] != "open":
+    if encounter["feedback"] is not None:
         raise Conflict("This encounter is already closed; choose the clip again through Explore")
     return _feedback_page(request, encounter, _launch(request, encounter))
 
@@ -325,7 +332,7 @@ def restore_preference(
 @router.post("/feedback/other")
 def begin_other(request: Request, encounter_id: str = Form(...)):
     encounter = _db(request).encounter(encounter_id)
-    if encounter["resolution"] != "open" or _db(request).blocked(encounter["media_id"]):
+    if encounter["feedback"] is not None or _db(request).blocked(encounter["media_path"]):
         raise Conflict("This encounter is closed or already has Something Else feedback")
     return RedirectResponse("/feedback/other?" + urlencode({"encounter_id": encounter_id}), 303)
 
@@ -333,7 +340,7 @@ def begin_other(request: Request, encounter_id: str = Form(...)):
 @router.get("/feedback/other", response_class=HTMLResponse)
 def other_page(request: Request, encounter_id: str):
     encounter = _db(request).encounter(encounter_id)
-    if encounter["resolution"] != "open":
+    if encounter["feedback"] is not None:
         raise Conflict("This encounter is already closed")
     body = (
         "<h1>Describe Change Required</h1><p>"
@@ -363,12 +370,12 @@ def addressed_page(request: Request):
     body += '<div class="toolbar">' + _link("/", "Home", "pill") + "</div>"
     body += '<form method="post" action="/feedback/addressed" class="stack">'
     for value, label in OTHER_FEEDBACK.items():
-        group = [task for task in tasks if task["type"] == value]
+        group = [task for task in tasks if task["other_feedback"] == value]
         if not group:
             continue
         body += f"<h2>{label}</h2>"
         for task in group:
-            body += f'<label class="check"><input type="checkbox" name="task_ids" value="{task["id"]}">{_media_label(task["relative_path"])}</label>'
+            body += f'<label class="check"><input type="checkbox" name="media_paths" value="{escape(task["relative_path"], quote=True)}">{_media_label(task["relative_path"])}</label>'
     body += (
         '<button class="primary">Save Addressed Items</button></form>'
         if tasks
@@ -378,8 +385,8 @@ def addressed_page(request: Request):
 
 
 @router.post("/feedback/addressed")
-def save_addressed(request: Request, task_ids: list[int] = Form(default=[])):
-    _db(request).resolve_tasks(task_ids)
+def save_addressed(request: Request, media_paths: list[str] = Form(default=[])):
+    _db(request).resolve_tasks(media_paths)
     return RedirectResponse("/", 303) if _html(request) else {"ok": True}
 
 
@@ -395,8 +402,8 @@ def submit_feedback(request: Request, feedback: str, encounter_id: str = Form(..
 
 @router.get("/cleanup", response_class=HTMLResponse)
 def cleanup_page(request: Request):
-    rows = _db(request).media_rows(unavailable=True)
-    body = "<h1>Clean Up</h1><p>Remove selected unavailable records and their encounter history. Media files are never deleted. Outstanding maintenance tasks are kept.</p>"
+    rows = _db(request).media_rows(include_blocked=True, unavailable=True)
+    body = "<h1>Clean Up</h1><p>Delete selected unavailable records, their preferences, maintenance flags, and encounter history. Media files are never deleted. A database backup is saved first.</p>"
     body += '<div class="toolbar">'
     if rows:
         body += '<button class="primary" form="cleanup-form">Clean Selected Records</button>'
@@ -406,33 +413,38 @@ def cleanup_page(request: Request):
     body += '<form id="cleanup-form" method="post" action="/cleanup" class="stack">'
     for row in rows:
         label = _media_label(row["relative_path"])
-        body += f'<label class="check"><input type="checkbox" name="media_ids" value="{row["id"]}">{label}</label>'
+        body += f'<label class="check"><input type="checkbox" name="media_paths" value="{escape(row["relative_path"], quote=True)}">{label}</label>'
     body += "</form>"
     if not rows:
-        body += "<p>No unavailable records. Refresh Library to check for deleted files.</p>"
+        body += "<p>No unavailable records.</p>"
     return _page("Clean Up", body)
 
 
+@router.post("/cleanup/check")
+def check_cleanup(request: Request):
+    _db(request).check_available_paths()
+    return RedirectResponse("/cleanup", 303) if _html(request) else {"ok": True}
+
+
 @router.post("/cleanup")
-def cleanup_records(request: Request, media_ids: list[int] = Form(default=[])):
-    _db(request).cleanup(media_ids)
+def cleanup_records(request: Request, media_paths: list[str] = Form(default=[])):
+    _db(request).cleanup(media_paths)
     return RedirectResponse("/", 303) if _html(request) else {"ok": True}
 
 
 @router.get("/reset", response_class=HTMLResponse)
 def reset_page():
     return _page(
-        "Reset Preferences",
-        "<h1>Reset Preferences?</h1><p>This clears all Favorites, frequency preferences, disinterest, and encounters. The media catalog and Something Else tasks remain. A database backup is saved first.</p>"
-        + _form("/reset", "Reset Preferences", kind="danger")
+        "Reset Library",
+        "<h1>Reset Library?</h1><p>This permanently clears the entire library database: catalog records, all preferences, maintenance flags, encounter history, and saved player and folder settings. Media files and existing backups are kept. A database backup is saved first. Use Scan Library afterward to rebuild the catalog.</p>"
+        + _form("/reset", "Reset Library", kind="danger")
         + _link("/", "Cancel"),
     )
 
 
 @router.post("/reset")
-def reset_preferences(request: Request):
-    _db(request).reset_preferences()
-    state.clear_state()
+def reset_library(request: Request):
+    _db(request).reset_library()
     return RedirectResponse("/", 303) if _html(request) else {"ok": True}
 
 
@@ -441,15 +453,14 @@ def last(request: Request):
     encounter = _db(request).pending_encounter() or _db(request).latest_encounter()
     if not encounter:
         raise KeyError("No encounter has been made yet")
-    return {"encounter": encounter, "media": _db(request).media(encounter["media_id"])}
+    return {"encounter": encounter, "media": _db(request).media(encounter["media_path"])}
 
 
 def _feedback_response(request: Request, encounter: dict) -> dict | RedirectResponse:
     if _html(request):
-        return RedirectResponse(encounter["context"]["return_path"], 303)
+        return RedirectResponse(encounter["return_path"], 303)
     return {
         "ok": True,
         "encounter_id": encounter["id"],
         "feedback": encounter["feedback"],
-        "resolution": encounter["resolution"],
     }

@@ -8,13 +8,15 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+import httpx
+
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from pocket_media_manager.app import create_app
 from pocket_media_manager.config import Settings
-from pocket_media_manager.state import create_stream_token
 from pocket_media_manager.streaming import media_response
+from pocket_media_manager.playback import build_stream_url
 
 
 class StreamingTests(unittest.TestCase):
@@ -30,7 +32,7 @@ class StreamingTests(unittest.TestCase):
         )
         self.client.__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
-        self.url = "/stream/" + create_stream_token(self.path)
+        self.url = "/media/sample.mp4"
 
     def test_ranges_suffixes_and_head(self):
         cases = (
@@ -88,7 +90,7 @@ class StreamingTests(unittest.TestCase):
     def test_empty_file_has_zero_length_and_rejects_byte_ranges(self):
         empty = self.root / "empty.mp4"
         empty.touch()
-        url = "/stream/" + create_stream_token(empty)
+        url = "/media/empty.mp4"
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b"")
@@ -98,25 +100,59 @@ class StreamingTests(unittest.TestCase):
         self.assertEqual(invalid.status_code, 416)
         self.assertEqual(invalid.headers["content-range"], "bytes */0")
 
-    def test_symlink_tokens_and_linked_parent_directories_are_rejected(self):
+    def test_symlink_files_and_linked_parent_directories_are_rejected(self):
         alias = self.root / "alias.mp4"
         try:
             alias.symlink_to(self.path)
         except (OSError, NotImplementedError):
             self.skipTest("Creating symlinks requires local Windows permission")
-        self.assertEqual(self.client.get("/stream/" + create_stream_token(alias)).status_code, 404)
+        self.assertEqual(self.client.get("/media/alias.mp4").status_code, 404)
         folder = self.root / "real"
         folder.mkdir()
         (folder / "clip.mp4").write_bytes(b"secret")
         linked = self.root / "linked"
         linked.symlink_to(folder, target_is_directory=True)
-        self.assertEqual(
-            self.client.get("/stream/" + create_stream_token(linked / "clip.mp4")).status_code, 404
-        )
+        self.assertEqual(self.client.get("/media/linked/clip.mp4").status_code, 404)
         metadata = self.settings.database_file
         self.assertEqual(
-            self.client.get("/stream/" + create_stream_token(metadata)).status_code, 404
+            self.client.get("/media/" + metadata.relative_to(self.root).as_posix()).status_code, 404
         )
+
+    def test_paths_outside_media_and_unsupported_files_are_not_served(self):
+        (self.root / "notes.txt").write_bytes(b"private notes")
+        for path in (
+            "/media/notes.txt",
+            "/media/.pocket-media-manager/pocket-media.sqlite3",
+            "/media/%2e%2e/secret.mp4",
+            "/media/..%5csecret.mp4",
+            "/media/%2fetc/passwd",
+        ):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertIn(response.status_code, (400, 404))
+                self.assertNotIn(b"private notes", response.content)
+
+    def test_literal_percent_escape_names_are_decoded_once_by_real_asgi_transport(self):
+        names = ("literal%2Fname.mp4", "literal%5Cname.mp4")
+        for name in names:
+            (self.root / name).write_bytes(name.encode("ascii"))
+
+        async def request_files():
+            # TestClient unquotes paths twice; ASGITransport models the actual single
+            # URL decode and lets these legal Windows filenames reach the endpoint.
+            transport = httpx.ASGITransport(app=self.client.app, client=("127.0.0.1", 50001))
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://127.0.0.1:8787"
+            ) as client:
+                for name in names:
+                    with self.subTest(name=name):
+                        url = build_stream_url(self.settings, name)
+                        self.assertIn("%25", url)
+                        response = await client.get(url)
+                        self.assertEqual(response.status_code, 200)
+                        self.assertEqual(response.content, name.encode("ascii"))
+
+        asyncio.run(request_files())
 
     def test_replacement_before_open_never_serves_new_unvalidated_bytes(self):
         real_open = os.open

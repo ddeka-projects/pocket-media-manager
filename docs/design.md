@@ -13,9 +13,9 @@ launches players, and commits feedback to SQLite.
 | `app.py` | Assemble routes, request protections, ownership, startup/shutdown, and server CLI. |
 | `config.py`, `env.py` | Frozen validated settings and literal `.env` parsing. |
 | `api.py` | Translate HTTP requests into app operations. |
-| `service.py` | Coordinate recommendations, browser choices, and pending feedback. |
+| `service.py` | Coordinate recommendations, shared choices, and pending feedback. |
 | `presentation.py`, `static/` | Server-rendered HTML, styles, and browser navigation. |
-| `playback.py`, `state.py` | mpv launch and bounded temporary VLC links. |
+| `playback.py` | mpv launch and stable path-based VLC links. |
 | `storage.py` | SQLite transactions, scans, verification, and backups. |
 | `recommender.py` | Recommendation eligibility and weights. |
 | `controller.py` | Explicit per-page control with no expiry. |
@@ -27,7 +27,8 @@ launches players, and commits feedback to SQLite.
 The browser shell keeps a random page ID and server-issued token in memory.
 Internal links and forms fetch server-rendered pages into the same document,
 keeping control through navigation. A duplicate tab or refresh creates a new
-identity. The browser preference cookie contains no ownership grant.
+identity. Player and folder preferences are shared database settings; there is
+no browser preference cookie. Taking control reloads the same saved choices.
 
 Ordinary HTML and JSON requests have a 12-second deadline, including response
 bodies. A timeout releases the busy indicator and reports an uncertain save
@@ -40,6 +41,54 @@ the old token. SQLite still independently protects transactions and resolves
 conflicting or repeated feedback safely. A process guard is acquired before
 initialization or scanning, preventing a second app server on the same data,
 even when configured on a different port.
+
+## Catalog and stored state
+
+The database uses schema 3 with three tables: `media`, `encounters`, and
+`settings`. Older schemas are rejected; there is no migration. Start a fresh
+metadata directory when upgrading from an older version.
+
+`media.relative_path` is the primary key, using a consistent Windows path
+representation and forward separators while retaining valid filenames. A
+scan retains the first catalogued spelling when only Windows casing changes;
+case-sensitive development filesystems keep distinct paths distinct. A
+same-path edit or replacement keeps its row, preferences, encounters, and
+maintenance flag. Moving or renaming a file creates a new identity and leaves
+the old path eligible for cleanup. The row stores availability, Favorite,
+Less often count, Not for me, and nullable Remake/Fix/Trim feedback. There is no
+file-version identity or separate maintenance-task table.
+
+Encounters use random UUID primary keys, a media-path reference, selection and
+closure times, a closing response, return path, and launch status. Null response
+and closure time mean pending. Ordinary feedback, No feedback, and maintenance
+responses close the encounter; preference toggles do not. A transaction commits
+the closing response and media changes together, so retries do not increment or
+decrement a counter twice. Only one encounter can await feedback. The response
+and closure time also supply enjoyment history and cooldowns to the recommender.
+
+Each Less often response adds a count; each Enjoyed it removes one, stopping at
+zero. Its weight multiplier is `2 ** -less_often_count`; elapsed time does not
+clear the count. Restore normal frequency resets it. Not for me and outstanding
+maintenance remain separate exclusions.
+
+The settings table holds one player choice (initially VLC), one folder
+selection (initially empty), and automatic-backup bookkeeping. It does not
+identify browsers or duplicate the pending encounter.
+
+Startup initializes storage and backups without scanning. Scan Library walks
+the media tree explicitly and publishes catalog availability only after a
+successful full scan. Clean Up checks only stored available paths, then offers
+deletion of selected missing media and their encounters. Reset Library clears
+all three tables. Both destructive actions save a verified snapshot first.
+Home visibility uses table-existence checks, not eligibility or task counts.
+
+VLC media addresses are derived from the configured origin and URL-encoded
+media-root relative path: `/media/{relative_path}`. The same endpoint serves
+Stream files without cataloguing them. There is no random-token registry or
+stored URL; links stay stable across app restarts while origin and path stay
+the same. mpv opens the local Windows path. File-serving checks still restrict
+access to allowed media inside the root and exclude metadata and linked paths.
+The app stores no playback positions and does not infer viewing completion.
 
 ## Interface conventions
 

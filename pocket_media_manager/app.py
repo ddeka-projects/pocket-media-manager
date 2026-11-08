@@ -3,9 +3,7 @@
 import argparse
 import asyncio
 import logging
-import re
 import sqlite3
-import uuid
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
@@ -15,7 +13,6 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import state
 from .api import router
 from .config import REPOSITORY, Settings, load_settings
 from .controller import ControllerOwnership
@@ -28,7 +25,6 @@ from .service import _feedback_request, _pending_response
 from .storage import Database, FeedbackRequired
 
 logger = logging.getLogger(__name__)
-COOKIE_NAME = "pocket_browser"
 CONTROLLER_PATHS = {"/api/controller/claim", "/api/controller/takeover", "/api/controller/release"}
 PUBLIC_PATHS = {"/health", "/favicon.ico", "/pocket-manager-icon.png", "/manifest.webmanifest"}
 
@@ -57,9 +53,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             application.state.database = database
             application.state.controller = ControllerOwnership()
             application.state.operation_lock = asyncio.Lock()
-            count = await run_in_threadpool(database.refresh_catalog, allow_pending=True)
             await run_in_threadpool(database.backup, daily=True)
-            logger.info("Catalog ready: %s media files", count)
+            logger.info("Library ready; use Scan Library to discover media")
             backup_task = asyncio.create_task(_daily_backups(database))
             yield
         except Exception:
@@ -70,7 +65,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 backup_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await backup_task
-            state.clear_state()
             process_lock.close()
 
     application = FastAPI(title="Pocket Media Manager", version="0.3.0", lifespan=lifespan)
@@ -82,14 +76,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     @application.middleware("http")
-    async def browser_context(request: Request, call_next):
+    async def app_context(request: Request, call_next):
         try:
             validate_request(request, request.app.state.settings)
             path = request.url.path
             public = (
-                path in PUBLIC_PATHS
-                or path.startswith("/static/")
-                or (path.startswith("/stream/") and path != "/stream/play")
+                path in PUBLIC_PATHS or path.startswith("/static/") or path.startswith("/media/")
             )
             if public:
                 response = await call_next(request)
@@ -115,13 +107,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         else:
                             with request.app.state.controller.authorized(page, token):
                                 pass
-                            browser_id = request.cookies.get(COOKIE_NAME, "")
-                            new_cookie = re.fullmatch(r"[0-9a-f]{32}", browser_id) is None
-                            if new_cookie:
-                                browser_id = uuid.uuid4().hex
-                            request.state.browser_id = browser_id
-                            request.state.browser = await run_in_threadpool(
-                                request.app.state.database.browser, browser_id
+                            request.state.preferences = await run_in_threadpool(
+                                request.app.state.database.preferences
                             )
                             pending = await run_in_threadpool(
                                 request.app.state.database.pending_encounter
@@ -131,14 +118,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 response = _pending_response(request, pending["id"])
                             else:
                                 response = await call_next(request)
-                            if new_cookie:
-                                response.set_cookie(
-                                    COOKIE_NAME,
-                                    browser_id,
-                                    max_age=365 * 24 * 3600,
-                                    httponly=True,
-                                    samesite="strict",
-                                )
         except AppError as error:
             response = JSONResponse(
                 {

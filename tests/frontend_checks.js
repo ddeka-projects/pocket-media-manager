@@ -159,7 +159,7 @@ async function checks() {
 
   const beforeStreaming = timers.length;
   transport = async () => jsonReply({ ok: true });
-  await window.fetch("/stream/playback-token");
+  await window.fetch("/media/folder/clip.mp4");
   assert(timers.length === beforeStreaming, "Media byte streams do not receive shell request deadlines");
 
   setupDocument();

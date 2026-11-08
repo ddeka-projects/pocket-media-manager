@@ -66,7 +66,7 @@ def _folder_header(mode: str, title: str, relative: str) -> str:
 
 
 def _media_label(relative_path: str) -> str:
-    """Top-level folder as a tag, then the file name (file names are unique in the library)."""
+    """Top-level folder as a tag, then the file name."""
     folder = relative_path.split("/", 1)[0] if "/" in relative_path else "Media root"
     return (
         f'<span><span class="tag">{escape(folder)}</span> {escape(Path(relative_path).name)}</span>'
@@ -81,7 +81,7 @@ def _error(request: Request, code: int, message: str, error_code: str | None = N
             if pending
             else _link("/", "Home")
             + _link("/explore", "Explore")
-            + _form("/library/refresh", "Refresh Library")
+            + _form("/library/scan", "Scan Library")
         )
         return _page(
             "Unable to continue",
@@ -96,24 +96,26 @@ def _error(request: Request, code: int, message: str, error_code: str | None = N
 
 def _feedback_page(request: Request, encounter: dict, launch: dict | None = None) -> HTMLResponse:
     identifier = encounter["id"]
-    if encounter["resolution"] != "open":
+    if encounter["feedback"] is not None:
         return _page(
             "Feedback saved",
             "<h1>Feedback saved</h1><p>This encounter is already closed.</p>"
-            + _link(encounter["context"]["return_path"], "Continue", "primary")
+            + _link(encounter["return_path"], "Continue", "primary")
             + _link("/", "Home"),
         )
-    media = _db(request).media(encounter["media_id"])
+    media = _db(request).media(encounter["media_path"])
     favorite = media["favorite"]
     body = f'<h1>Feedback</h1><p>{escape(Path(encounter["relative_path"]).name)}</p>'
     body += "<p>Close this feedback to continue on any device. Choosing No feedback is fine.</p>"
     body += f'<span hidden data-feedback-path="/feedback/{identifier}"></span>'
-    error = launch.get("launch_error") if launch else encounter["launch_error"]
+    error = launch.get("launch_error") if launch else None
     if error:
         body += f'<p class="error">{escape(error)}</p>'
+    elif launch is None and encounter["launch_status"] == "failed":
+        body += '<p class="error">The last playback request failed. Try Open Player again or close this feedback.</p>'
     if launch and launch.get("player_url"):
         body += f'<span hidden data-player-url="{escape(launch["player_url"], quote=True)}"></span>'
-    player_label = "mpv (PC)" if encounter["context"]["player"] == "mpv" else "VLC (Phone)"
+    player_label = "mpv (PC)" if request.state.preferences["player"] == "mpv" else "VLC (Phone)"
     body += '<div class="feedback-actions">'
     body += _form(f"/encounters/{identifier}/play", "Open Player — " + player_label)
     if not media["not_for_me"]:
@@ -130,7 +132,7 @@ def _feedback_page(request: Request, encounter: dict, launch: dict | None = None
         ("less_often", "Restore normal frequency"),
         ("not_for_me", "Allow recommendations again"),
     ):
-        if media[preference]:
+        if media["less_often_count" if preference == "less_often" else preference]:
             body += _form(
                 "/feedback/restore",
                 label,
@@ -143,7 +145,7 @@ def _feedback_page(request: Request, encounter: dict, launch: dict | None = None
         body += _form("/feedback/" + value, label, {"encounter_id": identifier}, kind)
     body += '</div><div class="quiet-row">'
     body += _form("/feedback/no_feedback", "No feedback", {"encounter_id": identifier}, "quiet")
-    if not _db(request).blocked(encounter["media_id"]):
+    if media["other_feedback"] is None:
         body += _form("/feedback/other", "Something Else", {"encounter_id": identifier}, "quiet")
     body += "</div>"
     return _page("Feedback", body)
@@ -214,7 +216,7 @@ def _explore_file(media: dict) -> str:
     if badges:
         badges = f'<span class="explore-badges">{badges}</span>'
     return f"""<form method="post" action="/explore/play">
-<input type="hidden" name="media_id" value="{media['id']}">
+<input type="hidden" name="media_path" value="{escape(media['relative_path'], quote=True)}">
 <button type="submit" class="explore-card explore-file {tone}">
 {PLAY_ICON}
 <span class="explore-content"><span class="explore-name">{escape(Path(media['relative_path']).name)}</span>
