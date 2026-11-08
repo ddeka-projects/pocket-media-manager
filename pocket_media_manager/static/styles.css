@@ -71,6 +71,7 @@ button.explore-card.home-hero {background:var(--accent);border-color:var(--accen
 .home-hero .explore-name {font-size:1.1rem}
 .home-hero .explore-detail {color:var(--accent-ink)}
 .maintenance {display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+.maintenance > .maintenance-wide,.maintenance > :only-child {grid-column:1/-1}
 .locations {display:grid;grid-template-columns:auto 1fr;gap:.3rem .9rem;margin:0;
   font-size:.8rem;color:var(--muted)}
 .locations dt {font-weight:600} .locations dd {margin:0;overflow-wrap:anywhere}

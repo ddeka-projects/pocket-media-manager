@@ -103,11 +103,11 @@ def home(request: Request):
         "/library/scan", "Scan Library", kind="" if library["has_media"] else "primary"
     )
     body += '<h2 class="section-label">Maintenance</h2><div class="maintenance">'
-    if library["has_media"]:
-        body += _link("/feedback/addressed", "Address Other Feedback", "compact")
-    body += _form("/cleanup/check", "Clean Up", kind="compact")
     if library["has_media"] or library["has_encounters"]:
         body += _link("/reset", "Reset Library", "compact")
+    body += _form("/cleanup/check", "Clean Up", kind="compact")
+    if library["has_media"]:
+        body += _link("/feedback/addressed", "Address Other Feedback", "compact maintenance-wide")
     settings = _settings(request)
     body += f"""</div><dl class="locations">
 <dt>Library</dt><dd>{escape(str(settings.media_root))}</dd>

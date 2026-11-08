@@ -13,6 +13,9 @@ Library appears when either media or encounters exist. These visibility checks
 only test table emptiness; a page can still report that nothing is eligible or
 that no maintenance work is outstanding.
 
+Maintenance places Reset Library and Clean Up side by side, with Address Other
+Feedback spanning the row below. When Clean Up is the only action, it fills the row.
+
 The player and folder selections are shared across devices and browser
 sessions. The initial player is VLC; choosing mpv saves that choice until you
 change it or reset the library. Taking control restores the same saved choices.
