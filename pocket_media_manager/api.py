@@ -345,7 +345,7 @@ def other_page(request: Request, encounter_id: str):
     body = (
         "<h1>Describe Change Required</h1><p>"
         + escape(encounter["relative_path"])
-        + '</p><div class="choice-grid">'
+        + '</p><div class="stack">'
     )
     for value, label in OTHER_FEEDBACK.items():
         body += _form(

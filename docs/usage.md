@@ -66,7 +66,8 @@ When the player opens, the browser displays feedback:
 - **No feedback** closes the encounter without expressing an opinion.
 - **Something Else** opens Remake, Fix, Trim, or Cancel. Saving a task
   closes the encounter without ordinary feedback and hides that file from
-  recommendations and Explore until addressed.
+  recommendations and Explore until addressed. Remake, Fix, and Trim are
+  full-width buttons stacked vertically; long filenames wrap within the screen.
 
 The feedback page lets you change Favorite and, when relevant, offers
 **Restore normal frequency** and **Allow recommendations again**. To reverse a
